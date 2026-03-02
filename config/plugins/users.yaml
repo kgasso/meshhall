@@ -1,0 +1,18 @@
+# config/plugins/users.yaml
+
+max_list: 30
+
+# ── Command privileges ────────────────────────────────────────────────────────
+# Privilege level reference:
+#   0  = muted    — all messages silently dropped
+#   1  = default  — auto-assigned on first contact
+#   2-14           = intermediate tiers
+#   15 = admin    — full access
+#
+privileges:
+  whoami:   1       # floor: 1 — anyone can look up their own info
+  whois:    1       # floor: 1 — anyone can look up other users
+  users:    15      # floor: 15 — admin only to list all users
+  setpriv:  15      # floor: 15 — admin only to change privileges
+  mute:     15      # floor: 15 — admin only to mute
+  unmute:   15      # floor: 15 — admin only to unmute

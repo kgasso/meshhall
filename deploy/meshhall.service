@@ -1,0 +1,41 @@
+# deploy/meshhall.service
+# systemd unit for the MeshHall main process.
+#
+# Install:
+#   sudo cp deploy/meshhall.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable meshhall
+#   sudo systemctl start meshhall
+#
+# Logs:
+#   journalctl -u meshhall -f
+
+[Unit]
+Description=MeshHall - Modular MeshCore Bot
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=meshhall
+Group=meshhall
+WorkingDirectory=/opt/meshhall
+
+# Activate the venv and run
+ExecStart=/opt/meshhall/venv/bin/python /opt/meshhall/meshhall.py
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meshhall
+
+# Allow serial port access (dialout group membership set during install)
+SupplementaryGroups=dialout
+
+# Basic hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

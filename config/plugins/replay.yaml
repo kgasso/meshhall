@@ -1,0 +1,8 @@
+# config/plugins/replay.yaml
+
+max_messages: 100
+
+# ── Command privileges ────────────────────────────────────────────────────────
+privileges:
+  replay: 1         # floor: 1 — anyone can replay channel history
+  search: 1         # floor: 1 — anyone can search message history

@@ -1,0 +1,12 @@
+# config/plugins/time.yaml
+
+# Local timezone for !time display
+# IANA zone names: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+timezone: "America/Los_Angeles"
+
+# ── Command privileges ────────────────────────────────────────────────────────
+# Values may only be raised above the hardcoded floor, never lowered below it.
+# Changes take effect immediately after !rehash — no restart needed.
+#
+privileges:
+  time: 1           # floor: 1 — everyone can check the time

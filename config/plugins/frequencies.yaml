@@ -1,0 +1,20 @@
+# config/plugins/frequencies.yaml
+
+# ── Command privileges ────────────────────────────────────────────────────────
+privileges:
+  freqs:    1       # floor: 1 — anyone can browse the frequency directory
+  freq:     1       # floor: 1 — anyone can look up a frequency
+  addfreq:  15      # floor: 15 — admin only to add/update
+  delfreq:  15      # floor: 15 — admin only to remove
+
+# ── Seed data ─────────────────────────────────────────────────────────────────
+# Loaded into the database on first run. Edit the DB directly for runtime changes.
+seed:
+  - { name: "SIMPLEX",   freq: "146.520", mode: "FM",  category: "repeater", notes: "National calling freq" }
+  - { name: "GMRS-1",    freq: "462.5625",mode: "FM",  category: "gmrs",     tone: "141.3" }
+  - { name: "MURS-1",    freq: "151.820", mode: "FM",  category: "murs" }
+  - { name: "NOAA-1",    freq: "162.400", mode: "NFM", category: "noaa",     notes: "WX1" }
+  - { name: "NOAA-2",    freq: "162.425", mode: "NFM", category: "noaa",     notes: "WX2" }
+  - { name: "NOAA-3",    freq: "162.450", mode: "NFM", category: "noaa",     notes: "WX3" }
+  - { name: "CB-9",      freq: "27.065",  mode: "AM",  category: "cb",       notes: "Emergency channel" }
+  - { name: "CB-19",     freq: "27.185",  mode: "AM",  category: "cb",       notes: "Truckers highway" }

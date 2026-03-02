@@ -1,0 +1,25 @@
+# config/plugins/weather.yaml
+
+# ── Location ──────────────────────────────────────────────────────────────────
+# NWS forecast zone. Find yours: https://www.weather.gov/pimar/PubZone
+zone: "ORZ024"
+lat: 42.4440
+lon: -123.3317
+
+# ── Alert broadcasting ────────────────────────────────────────────────────────
+# Leave blank to disable auto-broadcast (recommended default).
+alert_channel: ""
+
+# ── Polling ───────────────────────────────────────────────────────────────────
+poll_interval: 900
+forecast_interval: 3600
+
+# ── NWS API ───────────────────────────────────────────────────────────────────
+user_agent: "MeshHall/1.0 (mesh-network-bot)"
+
+# ── Command privileges ────────────────────────────────────────────────────────
+privileges:
+  wx:         1     # floor: 1 — anyone can check the forecast
+  alerts:     1     # floor: 1 — anyone can check active alerts
+  alert:      1     # floor: 1 — anyone can read a specific alert
+  wxrefresh:  15    # floor: 15 — admin only force-refresh

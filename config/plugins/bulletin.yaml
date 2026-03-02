@@ -1,0 +1,11 @@
+# config/plugins/bulletin.yaml
+
+max_list: 20
+max_length: 500
+
+# ── Command privileges ────────────────────────────────────────────────────────
+privileges:
+  bulletins: 1      # floor: 1 — anyone can read the bulletin list
+  bulletin:  1      # floor: 1 — anyone can read a specific bulletin
+  post:      2      # floor: 2 — must be a known member to post
+  delbul:    2      # floor: 2 — must be a known member to delete own bulletins

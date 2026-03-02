@@ -1,0 +1,124 @@
+# MeshHall — Main Configuration
+# Plugin-specific settings live in config/plugins/<plugin_name>.yaml
+# A plugin config file can exist without the plugin being loaded — harmless.
+
+# ── Bot identity ──────────────────────────────────────────────────────────────
+bot:
+  name: "MeshHall"
+
+  # Bot operator information shown in !about
+  admin_name:    "Name or Callsign not configured"
+  admin_contact: "no-email@example.com"
+
+  # Node IDs of operators with global admin privileges.
+  # Individual plugins can override this with their own admins list
+  # in their own config file (config/plugins/<plugin>.yaml).
+  #
+  # Format: 12-character hex pubkey prefix — NOT a callsign.
+  # This is the first 12 characters of the node's public key.
+  # Example: "720a0f69f9d7"
+  #
+  # How to find your node ID:
+  #   Option 1 (easiest) — Send any DM to the bot and check the logs:
+  #     journalctl -u meshhall | grep "DM received"
+  #     Look for: sender=XXXXXXXXXXXX  ← that's your ID
+  #
+  #   Option 2 — MeshCore Android/iOS app:
+  #     Tap your node in the Contacts list → find the Public Key field
+  #     Use the first 12 characters of that hex string
+  #
+  admins:
+    - "720a0f69f9d7"   # Replace with your actual pubkey prefix
+
+  # Command prefix character. Any single non-alphanumeric, non-space character.
+  # Default: "!" (e.g. !ping, !wx). Change to "/" for /ping, /wx, etc.
+  # Takes effect immediately after !rehash — no restart required.
+  command_char: "!"
+
+  # How often the bot sends a self-advertisement to the mesh (seconds).
+  # This makes the bot visible in nearby nodes' contact lists without
+  # requiring manual firmware configuration on the RAK4631.
+  # Set to 0 to disable (rely on node firmware advertising instead).
+  # Default 3600 = every hour — conservative to avoid mesh congestion.
+  advertise_interval: 3600
+
+  # How often to re-send the welcome message to returning DM users (minutes).
+  # On first DM the welcome is always sent. After that, it repeats if the user
+  # DMs again after this many minutes of inactivity.
+  # Set to 0 to send the welcome only once (first contact only).
+  intro_window_minutes: 60
+
+  # Local timezone for !time display.
+  # Uses IANA zone names: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+  timezone: "America/Los_Angeles"   # Pacific Time (default)
+
+# ── Connection ────────────────────────────────────────────────────────────────
+connection:
+  # type: serial | tcp
+  #
+  # SERIAL (recommended for most setups):
+  #   Direct USB connection from Pi to RAK4631.
+  #   The RAK4631 shows up as /dev/ttyACM0 on the Pi.
+  #   Verify with: ls /dev/ttyACM*
+  #
+  # TCP (alternative — NOT TESTED, likely does not work without a compatible device):
+  #   Requires a WiFi-enabled companion radio build (ESP32-based devices).
+  #   The RAK4631 is nRF52840-based and does NOT support TCP natively —
+  #   TCP is only available on ESP32 companion builds (e.g. Heltec V3, Station G2).
+  #   If using TCP, the MeshCore firmware must be compiled with WIFI_SSID and
+  #   WIFI_PWD defined. The node creates a TCP server on port 5000 (default).
+  #   Only one TCP client can connect at a time — the bot holds that connection.
+  #   See: https://deepwiki.com/meshcore-dev/MeshCore/9.1-serial-interfaces
+  #
+  type: serial
+
+  # --- Serial settings (used when type: serial) ---
+  serial_port: /dev/ttyACM0
+  baud_rate: 115200
+
+  # --- TCP settings (used when type: tcp) ---
+  # tcp_host: 192.168.1.100   # IP of the ESP32 MeshCore node on your LAN
+  # tcp_port: 5000             # Default MeshCore TCP port
+
+  # Seconds between outbound messages — prevents flooding the mesh.
+  # Increase if you see dropped messages; decrease for faster replies.
+  reply_pace_seconds: 1.5
+
+  # Deduplication window in seconds.
+  # Messages with the same (sender, sender_timestamp) seen within this window
+  # are dropped as duplicates. Dedup state is persisted to SQLite so a bot
+  # restart doesn't re-execute commands the node has buffered for replay.
+  # 120s covers typical node buffer replay on reconnect.
+  dedup_window_seconds: 120
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log_level: INFO       # DEBUG | INFO | WARNING | ERROR
+log_file: data/meshhall.log
+
+# ── Database ──────────────────────────────────────────────────────────────────
+db_path: data/meshhall.db
+
+# ── Channels ──────────────────────────────────────────────────────────────────
+# Channel configuration. Slot names and enumeration are managed via
+# !channel sync (read from radio). Only rate limiting is configured here.
+channels:
+  rate_limit:
+    enabled: true
+
+    # Per-sender-per-channel bucket. Controls how fast a single user can
+    # trigger commands. Exhaustion → one warning reply, then silent drop
+    # until the bucket refills.
+    per_sender:
+      capacity: 4        # max burst (tokens at full bucket)
+      refill_rate: 0.1   # tokens/second — 0.1 = 1 token per 10s sustained
+
+    # Per-channel bucket. Shared across all senders on a channel.
+    # Exhaustion → silent drop + log. No warning sent (avoids amplifying floods).
+    per_channel:
+      capacity: 10       # larger burst to accommodate multiple active users
+      refill_rate: 0.25  # tokens/second — 0.25 = 1 token per 4s sustained
+
+    # Send a single warning reply when per-sender limit is first hit.
+    # The warning is the last message sent before silent drop begins.
+    # Per-channel exhaustion always drops silently regardless of this flag.
+    warn_on_limit: true
