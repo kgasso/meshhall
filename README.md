@@ -263,7 +263,7 @@ data/                       Created at runtime (owned by meshhall user)
 ```
 
 > **NOAA SAME/EAS offline alerts** (RTL-SDR decoder) has been moved to a
-> separate repository: [meshhall-same](#). The standalone SDR decoder feeds
+> separate repository: [meshhall-same](https://github.com/kgasso/meshhall-same). The standalone SDR decoder feeds
 > offline weather alerts into MeshHall's database with zero internet dependency
 > — highly recommended if you have an RTL-SDR dongle.
 
