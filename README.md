@@ -60,8 +60,11 @@ This code is developed with both human authoring and agentic assistance.
 ### 1. Clone / copy files to the Pi
 
 ```bash
+# If you don't have Git installed, use sudo to install it locally
+sudo apt-get install git
+
 # As your regular user (e.g. 'pi')
-git clone <repo> ~/meshhall-src
+git clone https://github.com/kgasso/meshhall.git ~/meshhall-src
 cd ~/meshhall-src
 ```
 
