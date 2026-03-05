@@ -80,7 +80,7 @@ def setup(dispatcher, config, db):
         help_text="Browse frequency directory",
         usage_text="!freqs [category]",
         scope="direct", priv_floor=PRIV_DEFAULT, category="frequencies", plugin_name="frequencies",
-    )
+        allow_channel=True)
 
     async def cmd_freq(msg):
         name = msg.arg_str.strip().upper()
@@ -100,7 +100,7 @@ def setup(dispatcher, config, db):
         help_text="Look up a frequency by number",
         usage_text="!freq <n>",
         scope="direct", priv_floor=PRIV_DEFAULT, category="frequencies", plugin_name="frequencies",
-    )
+        allow_channel=True)
 
     async def cmd_addfreq(msg):
         dispatcher.log_admin_attempt("!addfreq", msg, granted=True)

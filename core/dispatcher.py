@@ -19,10 +19,20 @@ Privilege resolution (per command, at dispatch time):
   3. Clamped to [floor, 15]
   This means !rehash picks up privilege changes immediately.
 
-Command scope (hardcoded per command, not configurable):
-  "direct"  — DM only
-  "channel" — DM or any channel the bot is in
-"""
+Command scope (default hardcoded per command, operator-configurable via plugin YAML):
+  "channel"  — DM or any channel the bot is in
+  "direct"   — DM only
+  "disabled" — silently dropped at dispatch; hidden from !help output
+
+  Scope resolution (per command, at dispatch time):
+    1. Plugin config: config.plugin(plugin_name).get("scopes.<cmd_key>")
+    2. Hardcoded default in register_command()
+  Restriction rules (widest → narrowest):
+    - Any command can be disabled via config — no opt-in required.
+    - "channel" can be tightened to "direct" or "disabled" via config.
+    - "direct" can be tightened to "disabled" via config, or widened to
+      "channel" only if allow_channel=True was passed at registration.
+    - Built-in commands (plugin_name="") ignore config and use their default."""
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -113,15 +123,16 @@ HandlerFn = Callable[[Message], Awaitable[Optional[str]]]
 
 
 class CommandEntry(NamedTuple):
-    handler:     HandlerFn
-    help_text:   str          # short one-line description for summary help
-    scope:       str          # "direct" or "channel"
-    priv_floor:  int          # hardcoded minimum — config cannot go below this
-    is_admin:    bool
-    plugin_name: str          # used to look up config.plugin(plugin_name)
-    cmd_key:     str          # bare command name without "!" for config key lookup
-    category:    str          # help grouping — "core" always listed first, rest alphabetical
-    usage_text:  str  = ""   # extended usage shown in !help <cmd> — omit for commands with no args
+    handler:       HandlerFn
+    help_text:     str          # short one-line description for summary help
+    scope:         str          # registered default: "direct" or "channel"
+    priv_floor:    int          # hardcoded minimum — config cannot go below this
+    is_admin:      bool
+    plugin_name:   str          # used to look up config.plugin(plugin_name)
+    cmd_key:       str          # bare command name without "!" for config key lookup
+    category:      str          # help grouping — "core" always listed first, rest alphabetical
+    usage_text:    str  = ""    # extended usage shown in !help <cmd>
+    allow_channel: bool = False # if True, a "direct" default can be widened to "channel" via config
 
 # Sentinel used when a plugin doesn't specify a category
 _CAT_CORE  = "core"
@@ -144,6 +155,12 @@ class Dispatcher:
         # Keyed by sender_id. Entries expire after CONFIRM_TTL_SECONDS.
         # { sender_id: {"action": "restart"|"shutdown", "expires": float} }
         self._pending_confirm: Dict[str, dict] = {}
+        # Bot start time — used by !stats for uptime reporting.
+        self.started_at: float = time.time()
+        # In-memory command usage counters — incremented on every successful
+        # dispatch. Reset on restart (intentional — reflects current session).
+        # { "!cmd": count }
+        self._cmd_usage: Dict[str, int] = {}
         self._register_builtins()
 
     @property
@@ -200,6 +217,68 @@ class Dispatcher:
         # Clamp: config can raise the floor but never lower it
         return max(entry.priv_floor, min(15, configured))
 
+    def resolve_scope(self, entry: CommandEntry) -> str:
+        """
+        Resolve the effective scope for a command at runtime.
+
+        Order:
+          1. Config value: config.plugin(entry.plugin_name)
+                               .get("scopes.<cmd_key>")
+             Accepted values: "channel", "direct", "disabled"
+          2. Hardcoded default (entry.scope)
+
+        Scope hierarchy (widest → narrowest):
+          channel  — responds in DMs and any channel the bot is in
+          direct   — DM only
+          disabled — silently dropped regardless of source; hidden from !help
+
+        Restriction rules:
+          - Any command can be disabled via config regardless of its registered
+            default. No opt-in required — operators should always be able to
+            turn off a command.
+          - "channel" can be tightened to "direct" or "disabled" via config.
+          - "direct" can be tightened to "disabled" via config, or widened to
+            "channel" only if registered with allow_channel=True.
+          - Built-in commands (plugin_name="") always use their registered
+            default and cannot be overridden via config.
+        """
+        if not entry.plugin_name:
+            return entry.scope
+
+        cfg_val = self.config.plugin(entry.plugin_name).get(
+            f"scopes.{entry.cmd_key}"
+        )
+        if cfg_val is None:
+            return entry.scope
+
+        if cfg_val not in ("direct", "channel", "disabled"):
+            logger.warning(
+                f"Invalid scope value for {entry.plugin_name}."
+                f"scopes.{entry.cmd_key}: {cfg_val!r} — "
+                f"must be 'channel', 'direct', or 'disabled'. "
+                f"Using default {entry.scope!r}."
+            )
+            return entry.scope
+
+        # Disabling is always permitted — narrowest possible scope.
+        if cfg_val == "disabled":
+            return "disabled"
+
+        # Tightening (channel → direct) is always allowed.
+        if cfg_val == "direct":
+            return "direct"
+
+        # Widening (direct → channel) only if explicitly opted in.
+        if cfg_val == "channel" and entry.scope == "direct" and not entry.allow_channel:
+            logger.warning(
+                f"{entry.plugin_name}.scopes.{entry.cmd_key}=channel ignored — "
+                f"this command was not registered with allow_channel=True."
+            )
+            return "direct"
+
+        return cfg_val
+
+
     # ── Built-in commands ─────────────────────────────────────────────────────
 
     def _register_builtins(self):
@@ -207,11 +286,9 @@ class Dispatcher:
 
         async def cmd_ping(msg):
             pl = msg.path_len
-            if pl is None:
-                return "Pong! Path: unknown"
-            if pl == 255:
-                return "Pong! Direct"
-            return f"Pong! {pl} hop(s)"
+            if pl is None or pl == 255:
+                return "Pong! Path: Direct or Unknown"
+            return f"Pong! Path: {pl} hop(s)"
 
         self.register_command(
             "!ping", cmd_ping,
@@ -378,16 +455,20 @@ class Dispatcher:
     # ── Plugin registration API ───────────────────────────────────────────────
 
     def register_command(self, command: str, handler: HandlerFn,
-                         help_text:   str = "",
-                         scope:       str = "direct",
-                         priv_floor:  int = PRIV_DEFAULT,
-                         is_admin:    bool = False,
-                         plugin_name: str = "",
-                         category:    str = "",
-                         usage_text:  str = "",
+                         help_text:     str  = "",
+                         scope:         str  = "direct",
+                         priv_floor:    int  = PRIV_DEFAULT,
+                         is_admin:      bool = False,
+                         plugin_name:   str  = "",
+                         category:      str  = "",
+                         usage_text:    str  = "",
+                         allow_channel: bool = False,
                          # Legacy compat
-                         allow_channel:  bool = False,
-                         min_privilege:  int  = None):
+                         min_privilege: int  = None):
+        # Legacy: allow_channel=True at registration time still forces scope
+        # to "channel" as a hardcoded default (old behaviour preserved).
+        # Going forward plugins set scope="channel" directly; allow_channel is
+        # also stored on the entry so resolve_scope can permit config widening.
         if allow_channel:
             scope = "channel"
         if min_privilege is not None and priv_floor == PRIV_DEFAULT:
@@ -406,10 +487,11 @@ class Dispatcher:
             cmd_key=cmd_key,
             category=cat,
             usage_text=usage_text,
+            allow_channel=allow_channel,
         )
         logger.debug(
             f"Registered: {key} scope={scope} floor={priv_floor} "
-            f"cat={cat} plugin={plugin_name or '(builtin)'}"
+            f"allow_channel={allow_channel} cat={cat} plugin={plugin_name or '(builtin)'}"
         )
 
     def register_admin_command(self, command: str, handler: HandlerFn,
@@ -520,7 +602,13 @@ class Dispatcher:
             # !help <command> — strip optional command_char prefix from arg.
             # Handles: "!help ping", "!help !ping", "/help /ping", "! help ping"
             query = msg.arg_str.strip().lstrip(cc).lstrip("!").strip().lower()
-            if query:
+            if query == "admin":
+                # Non-admins get unknown-command treatment — no hint it exists.
+                if privilege < PRIV_ADMIN:
+                    logger.debug(f"!help admin ignored — {who} has priv {privilege}")
+                    return
+                reply = self._build_admin_help(cc)
+            elif query:
                 reply = self._build_command_help(query, privilege, cc)
             else:
                 reply = self._build_help(privilege, msg.is_dm, cc)
@@ -535,8 +623,12 @@ class Dispatcher:
         # Display command with configured char in log/response messages
         cmd_display = cc + cmd_key.lstrip("!")
 
-        # 6. Scope check
-        if entry.scope == "direct" and not msg.is_dm:
+        # 6. Scope check — resolved live from config (mirrors privilege resolution)
+        effective_scope = self.resolve_scope(entry)
+        if effective_scope == "disabled":
+            logger.debug(f"{cmd_display} ignored — disabled via config")
+            return
+        if effective_scope == "direct" and not msg.is_dm:
             logger.debug(f"{cmd_display} ignored — direct-only, received in channel")
             return
 
@@ -578,6 +670,10 @@ class Dispatcher:
             logger.info(
                 f"CMD: {cmd_display} by {who} via {source} priv={privilege}/{effective_priv}"
             )
+
+        # Track usage for !stats — incremented before handler so even commands
+        # that return errors are counted (reflects usage intent, not success).
+        self._cmd_usage[cmd_key] = self._cmd_usage.get(cmd_key, 0) + 1
 
         try:
             reply = await entry.handler(msg)
@@ -641,23 +737,55 @@ class Dispatcher:
                     command_char: str = "!") -> str:
         """
         Simplified summary help — one line per command, no categories.
-        Preamble directs users to !help <cmd> for details.
+        Admin commands are excluded from the index entirely.
+        Admins get a note directing them to !help admin for their commands.
+        Disabled commands are hidden regardless of privilege.
         """
         lines = [f"Use {command_char}help <command> for details\n"]
+
+        if privilege >= PRIV_ADMIN:
+            lines.append(f"Use {command_char}help admin for admin commands.\n")
         for stored_cmd, entry in sorted(self._commands.items()):
             if not entry.help_text:
                 continue
+            if entry.is_admin:
+                continue
+            effective_scope = self.resolve_scope(entry)
+            if effective_scope == "disabled":
+                continue
             if privilege < self.resolve_privilege(entry):
                 continue
-            if not is_dm and entry.scope == "direct":
+            if not is_dm and effective_scope == "direct":
                 continue
             display_cmd = command_char + stored_cmd.lstrip("!")
-            # Strip any embedded "Usage: ..." from the short description
             short = entry.help_text.split("Usage:")[0].rstrip(". ")
             lines.append(f"{display_cmd}: {short}")
 
         if len(lines) == 1:
             return "MeshHall — no commands available at your privilege level."
+
+        return "\n".join(lines)
+
+    def _build_admin_help(self, command_char: str = "!") -> str:
+        """
+        Admin-only command index. Only shown to users with PRIV_ADMIN.
+        Non-admins get unknown-command treatment at the call site.
+        """
+        lines = [f"Admin commands — use {command_char}help <command> for details\n"]
+        for stored_cmd, entry in sorted(self._commands.items()):
+            if not entry.is_admin:
+                continue
+            if not entry.help_text:
+                continue
+            effective_scope = self.resolve_scope(entry)
+            if effective_scope == "disabled":
+                continue
+            display_cmd = command_char + stored_cmd.lstrip("!")
+            short = entry.help_text.split("Usage:")[0].rstrip(". ")
+            lines.append(f"{display_cmd}: {short}")
+
+        if len(lines) == 1:
+            return "No admin commands registered."
         return "\n".join(lines)
 
     def _build_command_help(self, query: str, privilege: int,
@@ -665,11 +793,15 @@ class Dispatcher:
         """
         Context-sensitive help for a single command.
         Returns full description + usage + scope info.
+        Disabled commands are treated as unknown — silent from the user's view.
         """
-        # Accept both "ping" and "!ping" as query (char already stripped by caller)
         stored_cmd = "!" + query.lstrip("!")
         entry = self._commands.get(stored_cmd)
         if not entry:
+            return f"Unknown command: {command_char}{query}"
+
+        # Treat disabled the same as unknown — don't confirm its existence.
+        if self.resolve_scope(entry) == "disabled":
             return f"Unknown command: {command_char}{query}"
 
         eff_priv = self.resolve_privilege(entry)
@@ -680,7 +812,8 @@ class Dispatcher:
         lines = [f"{display_cmd}: {entry.help_text}"]
         if entry.usage_text:
             lines.append(f"Usage: {entry.usage_text}")
-        scope_note = "DM only" if entry.scope == "direct" else "DM or channel"
+        eff_scope = self.resolve_scope(entry)
+        scope_note = "DM or channel" if eff_scope == "channel" else "DM only"
         lines.append(f"Scope: {scope_note} | Priv: {eff_priv}")
         return "\n".join(lines)
 
@@ -719,6 +852,32 @@ class Dispatcher:
     @property
     def reply_queue(self) -> asyncio.Queue:
         return self._reply_queue
+
+    @property
+    def cmd_usage(self) -> Dict[str, int]:
+        """Read-only view of per-command dispatch counts since last restart."""
+        return dict(self._cmd_usage)
+
+    async def enqueue_dm(self, target_id: str, text: str):
+        """
+        Send a DM to a specific node by pubkey_prefix, independent of any
+        incoming Message context. Runs text through the standard chunker so
+        the 156-byte firmware limit is respected automatically.
+
+        Use this from plugins that need to push unsolicited DMs (e.g. MOTD
+        delivery, alert notifications) rather than writing directly to
+        reply_queue, which bypasses chunking.
+        """
+        chunks = chunk_text(text, MAX_CHUNK)
+        for i, chunk in enumerate(chunks):
+            await self._reply_queue.put({
+                "target_id":   target_id,
+                "channel":     None,
+                "channel_idx": None,
+                "text":        chunk,
+                "part":        i + 1,
+                "total":       len(chunks),
+            })
 
 
 def _priv_label(priv: int) -> str:

@@ -9,3 +9,17 @@ privileges:
   bulletin:  1      # floor: 1 — anyone can read a specific bulletin
   post:      2      # floor: 2 — must be a known member to post
   delbul:    2      # floor: 2 — must be a known member to delete own bulletins
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  bulletins: direct  # default: direct [configurable — can widen to channel]
+  bulletin:  direct  # default: direct [configurable — can widen to channel]
+  post:      direct  # default: direct [locked — write operation, DM only]
+  delbul:    direct  # default: direct [locked — write operation, DM only]

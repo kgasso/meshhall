@@ -18,3 +18,17 @@ seed:
   - { name: "NOAA-3",    freq: "162.450", mode: "NFM", category: "noaa",     notes: "WX3" }
   - { name: "CB-9",      freq: "27.065",  mode: "AM",  category: "cb",       notes: "Emergency channel" }
   - { name: "CB-19",     freq: "27.185",  mode: "AM",  category: "cb",       notes: "Truckers highway" }
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  freqs:   direct   # default: direct [configurable — can widen to channel]
+  freq:    direct   # default: direct [configurable — can widen to channel]
+  addfreq: direct   # default: direct [locked — admin write operation, DM only]
+  delfreq: direct   # default: direct [locked — admin write operation, DM only]

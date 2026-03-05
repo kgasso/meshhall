@@ -16,3 +16,18 @@ privileges:
   setpriv:  15      # floor: 15 — admin only to change privileges
   mute:     15      # floor: 15 — admin only to mute
   unmute:   15      # floor: 15 — admin only to unmute
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  whois:   direct   # default: direct [locked — user data, DM only]
+  users:   direct   # default: direct [locked — admin only, DM only]
+  setpriv: direct   # default: direct [locked — admin action, DM only]
+  mute:    direct   # default: direct [locked — admin action, DM only]
+  unmute:  direct   # default: direct [locked — admin action, DM only]

@@ -15,6 +15,107 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 
 ---
 
+## [v0.8.2] — 2026-03-04
+
+### Removed
+- **`02_checkin` plugin removed** — `!checkin`, `!status`, `!missing`, `!roll`
+  and the `checkins` table are gone. The plugin is being replaced by a full
+  net management system (`nets`) in the next release with support for named
+  nets, recurring sessions, net control operators, guest check-ins, and more.
+  No migration path — zero active deployments.
+
+### Core
+- **`!help` index no longer shows admin commands** — admin commands (`is_admin=True`)
+  are excluded from the default `!help` listing for all users. Admins see a note
+  at the top of the listing directing them to `!help admin`.
+- **`!help admin`** — new subcommand listing all admin commands, gated to
+  `PRIV_ADMIN`. Non-admins receive unknown-command treatment (silent drop).
+  `!help <commandname>` continues to work for admin command detail for admins.
+
+
+- **Database migration:** `users.home_zip TEXT` column added via the existing
+  migration runner. Stores each user's preferred ZIP code set via `!setloc`.
+  Added `db.get_home_zip()` and `db.set_home_zip()` helpers.
+- **Configurable command scope:** Command scope (`direct`/`channel`) is now
+  operator-configurable via `scopes:` blocks in each plugin's YAML file,
+  mirroring the existing `privileges:` pattern.
+  - `resolve_scope(entry)` added to `Dispatcher` — reads
+    `config.plugin(plugin_name).get("scopes.<cmd_key>")` at dispatch time,
+    falling back to the registered default if absent.
+  - `CommandEntry` gains an `allow_channel: bool` field. Commands registered
+    with `scope="direct"` can only be widened to `channel` via config if the
+    plugin explicitly sets `allow_channel=True` at registration — prevents
+    accidental channel exposure of commands designed for DM use.
+  - `"channel"` defaults can always be tightened to `"direct"` via config.
+  - All plugin YAML files updated with a `scopes:` block documenting each
+    command's default scope and whether it is `[configurable]` (operator can
+    change via YAML) or `[locked]` (DM only by design, ignores config).
+  - `config/plugins/channels.yaml` created (was previously absent).
+  - `allow_channel=True` added to commands that are reasonable to expose in
+    channel at operator discretion: `!time`, `!checkin`, `!missing`, `!roll`,
+    `!bulletins`, `!bulletin`, `!freqs`, `!freq`, `!wx`, `!alerts`, `!replay`,
+    `!search`. Commands that are DM-only by design remain locked.
+- **`dispatcher.enqueue_dm(target_id, text)`** — new public method for plugins
+  to send unsolicited DMs (MOTD delivery, future alert notifications etc.)
+  without writing directly to `reply_queue`. Routes through `chunk_text()` so
+  the 156-byte firmware limit is respected automatically. Replaces the raw
+  `reply_queue.put()` calls that previously bypassed chunking.
+- **`!ping` response format updated:**
+  - `path_len=None` or `path_len=255` (firmware sentinel for absent/unknown
+    routing metadata) → `Pong! Path: Direct or Unknown`
+  - Known hop count → `Pong! Path: x hop(s)`
+
+### Plugins
+- **`weather` v0.5.0:**
+  - **`!setloc <zip>`** (DM, priv 1) — users save a home ZIP code once;
+    bare `!wx` and `!alerts` then use their personal location automatically.
+    `!setloc` with no arg shows the current ZIP. `!setloc clear` removes it.
+    ZIP is validated against the loaded CSV before storing. Stored in
+    `users.home_zip` via the new DB helpers.
+  - **`!wx` scope changed to `direct`** — personalized responses belong in DM,
+    not the channel. `!wx <zip>` and the setloc-aware bare `!wx` both DM-only.
+  - **`!alerts` scope changed to `direct`** — same rationale.
+  - **`!alerts <zip>`** — live NWS point-based alert lookup for any US ZIP.
+    Results are returned directly from the NWS API response (not from the DB
+    cache, which only holds home-zone alerts). New alerts found are still
+    persisted to `wx_alerts` so `!alert <id>` works for them.
+  - **`!alerts` setloc-aware** — bare `!alerts` uses the user's saved ZIP if
+    set, falling back to the bot's configured home zone otherwise.
+  - **`!alerts <zip>` now returns real DB IDs** — previously the ZIP path built
+    its response from raw NWS API features and showed `id: —` as a placeholder,
+    making `!alert <id>` unusable for ZIP-discovered alerts. Now: persist via
+    `_store_alert_features()` first, then query back by `event_id` to build the
+    response from DB rows. Every alert shown by `!alerts` (regardless of source)
+    now has a valid `#id` that works with `!alert <id>`.
+  - **ZIP data source updated** to http://uszipcodelist.com/zip_code_database.csv.
+    Column mapping defaults updated accordingly (`primary_city`, `latitude`,
+    `longitude`). Both path and column map remain configurable in weather.yaml.
+
+- **`motd` v0.1.0** (new plugin `09_motd.py`) — message of the day support.
+  - **`!motd`** (DM, priv 1) — show the current MOTD with set timestamp.
+  - **`!setmotd <text>`** (DM, admin) — set the MOTD. Max length enforced via
+    `motd.max_length` config (default 200 chars). Admin action is audit-logged.
+  - **`!clearmotd`** (DM, admin) — remove the MOTD.
+  - **Auto-delivery:** MOTD is sent automatically after the welcome message
+    when a user first contacts the bot (or after the intro window elapses),
+    if a MOTD is set. Implemented as a listener that detects a fresh welcome
+    (welcomed_ts within last 10s) and enqueues the MOTD DM.
+  - Schema: single-row `motd` table (`id=1` enforced via CHECK constraint,
+    `ON CONFLICT DO UPDATE` for upsert).
+  - Config: `config/plugins/motd.yaml` with `max_length` setting.
+
+### Config
+- `weather.yaml`: `zip_csv_path` added (default `data/zip_code_database.csv`).
+- `weather.yaml`: `zip_columns` map added with defaults matching uszipcodelist.com.
+- `weather.yaml`: `zip_cache_ttl` added (default 1800 seconds / 30 minutes).
+- `config/plugins/motd.yaml` added.
+
+### Data
+- `data/zip_code_database.csv` added as a stub with setup instructions.
+  Replace with the full dataset from http://uszipcodelist.com/zip_code_database.csv
+
+---
+
 ## [v0.8.0] — 2026-03-01
 
 ### Core v0.8.0

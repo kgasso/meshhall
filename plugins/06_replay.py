@@ -65,7 +65,7 @@ def setup(dispatcher, config, db):
         help_text="Replay recent messages",
         usage_text="!replay [n | Xh | Xd]",
         scope="channel", priv_floor=PRIV_DEFAULT, category="utility", plugin_name="replay",
-    )
+        allow_channel=True)
 
     async def cmd_search(msg):
         term = msg.arg_str.strip()
@@ -87,4 +87,4 @@ def setup(dispatcher, config, db):
         help_text="Search message history by keyword",
         usage_text="!search <term>",
         scope="channel", priv_floor=PRIV_DEFAULT, category="utility", plugin_name="replay",
-    )
+        allow_channel=True)
