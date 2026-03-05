@@ -1,0 +1,18 @@
+# config/plugins/channels.yaml
+
+# ── Command privileges ────────────────────────────────────────────────────────
+privileges:
+  channels: 1       # floor: 1 — anyone can list channels
+  channel:  15      # floor: 15 — admin only to modify
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  channels: direct  # default: direct [locked — radio management, DM only]
+  channel:  direct  # default: direct [locked — admin action, DM only]

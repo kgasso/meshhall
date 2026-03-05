@@ -8,34 +8,160 @@ Runs on a Raspberry Pi connected to a RAK4631 WisBlock LoRa node via USB serial.
 ## Disclaimer
 There is no warranty of fitness of this code for any purpose. It was originally
 written to meet my needs of running on a Raspberry Pi 3B+, but likely will
-work on other Linux or Unix-like operating systems. 
+work on other Linux or Unix-like operating systems.
 
 This code is developed with both human authoring and agentic assistance.
+
+This is pre-release code. Database changes should all be backward compatible,
+but configuration changes may require manual intervention.
 
 ---
 
 ## Commands
 
+Commands are sent as direct messages (DM) to the bot, or in a channel if marked
+as channel-capable. Use `!help` for a live list filtered to your privilege level,
+or `!help <command>` for detailed usage on any specific command.
+
+> **Command character** — the default prefix is `!`. Operators can change it
+> via `bot.command_char` in `config.yaml`. A space between the prefix and command
+> name is tolerated (e.g. `! ping`) for mobile autocorrect compatibility.
+
+---
+
+### Core (built-in)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!ping` | channel | Check connectivity; returns hop count or `Direct` |
+| `!about` | DM | About this bot and its operator contact |
+| `!whoami` | DM | Your station name, node ID, and privilege level |
+| `!help [cmd]` | channel/DM | Command list (filtered by privilege); `!help <cmd>` for details |
+| `!version` | DM | Core version and loaded plugin versions (admin) |
+| `!rehash` | DM | Reload all config files without restarting (admin) |
+| `!restart` | DM | Restart the bot process — requires `!restart confirm` (admin) |
+| `!shutdown` | DM | Shut down the bot — requires `!shutdown confirm` (admin) |
+
+---
+
+### Time (`01_time`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!time` | channel | Current UTC and local time from the Pi system clock |
+
+---
+
+
+---
+
+### Bulletins (`03_bulletin`)
+
+Requires privilege 2 (known member) to post or delete.
+
+| Command | Scope | Description |
+|---|---|---|
+| `!bulletins [n]` | DM | List recent bulletins |
+| `!bulletin <id>` | DM | Read a bulletin in full |
+| `!post <message>` | DM | Post a new bulletin |
+| `!delbul <id>` | DM | Delete a bulletin (own bulletins, or any if admin) |
+
+---
+
+### Frequencies (`04_frequencies`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!freqs [category]` | DM | Browse the frequency directory |
+| `!freq <n>` | DM | Look up a frequency by number |
+| `!addfreq NAME FREQ MODE CAT [TONE] [notes]` | DM | Add a frequency entry (admin) |
+| `!delfreq <n>` | DM | Remove a frequency entry (admin) |
+
+---
+
+### Weather (`05_weather`)
+
+NWS forecast and alert data. All weather commands are DM-only. Requires internet
+access for live fetches; falls back to cached data with a timestamp note when
+NWS is unreachable.
+
+Users can save a home ZIP with `!setloc` — bare `!wx` and `!alerts` will then
+use their personal location instead of the bot's configured area.
+
 | Command | Description |
 |---|---|
-| `!time` | Current UTC + local time from Pi system clock (RTC-backed) |
-| `!checkin [note]` | Log a welfare check-in |
-| `!status [callsign]` | Last check-in for a station |
-| `!missing [hours]` | Stations not checked in within N hours (default 24) |
-| `!roll` | All stations and last check-in time |
-| `!post <msg>` | Post a bulletin |
-| `!bulletins [n]` | List recent bulletins |
-| `!bulletin <id>` | Read a bulletin in full |
-| `!delbul <id>` | Delete a bulletin (own or admin) |
-| `!freqs [category]` | Frequency directory |
-| `!freq <n>` | Look up a specific frequency |
-| `!addfreq …` | (Admin) Add a frequency entry |
-| `!wx` | Cached NWS weather forecast |
-| `!alerts` | Active NWS weather alerts |
-| `!alert <id>` | Read full alert text |
-| `!replay [n\|Xh\|Xd]` | Replay message history |
-| `!search <term>` | Search message history |
-| `!help` | List all commands |
+| `!wx` | Forecast for your `!setloc` ZIP, or the bot's configured area if not set |
+| `!wx <zip>` | NWS forecast for any US ZIP code |
+| `!wx [periods]` | 1–8 forecast periods for the local area (default 2) |
+| `!setloc <zip>` | Save your home ZIP for personalised `!wx` and `!alerts` |
+| `!setloc` | Show your current home ZIP |
+| `!setloc clear` | Remove your saved home ZIP |
+| `!alerts` | Active NWS/EAS alerts for your `!setloc` ZIP, or the home zone |
+| `!alerts <zip>` | Active NWS alerts for any US ZIP code (live fetch) |
+| `!alert <id>` | Read the full text of a stored alert by ID |
+| `!wxrefresh` | Force an immediate NWS data refresh (admin) |
+
+ZIP lookup requires `data/zip_code_database.csv` — see
+[weather.yaml](config/plugins/weather.yaml) for source and column mapping.
+
+---
+
+### Statistics (`10_stats`)
+
+Admin-only, DM only. All sections available individually or as a combined summary.
+
+| Command | Description |
+|---|---|
+| `!stats` | Full summary across all sections |
+| `!stats messages` | Message volume (24h / 7d / all time) and top senders |
+| `!stats users` | Active user counts (24h / 7d) and total known users |
+| `!stats channels` | Most active channels by message count (7d) |
+| `!stats commands` | Top commands by dispatch count this session |
+| `!stats alerts` | NWS alerts stored (7d / active / all time) |
+| `!stats uptime` | Bot process uptime and start timestamp |
+| `!stats wx` | ZIP forecast cache hit rate since last restart |
+
+---
+
+| Command | Description |
+|---|---|
+| `!motd` | Show the current message of the day |
+| `!setmotd <text>` | Set the message of the day (admin) |
+| `!clearmotd` | Clear the message of the day (admin) |
+
+The MOTD is also delivered automatically after the welcome message on a user's
+first contact (or when the intro window elapses), if one is set.
+
+---
+
+### Replay (`06_replay`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!replay [n \| Xh \| Xd]` | channel | Replay recent messages — last N messages, last X hours, or last X days |
+| `!search <term>` | channel | Search message history by keyword |
+
+---
+
+### Users (`07_users`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!whois <name\|ID>` | DM | Look up a user by display name or node ID |
+| `!users [filter]` | DM | List known users, optionally filtered |
+| `!setpriv <id\|name> <0-15>` | DM | Set a user's privilege level (admin) |
+| `!mute <id\|name>` | DM | Mute a user — sets privilege 0 (admin) |
+| `!unmute <id\|name>` | DM | Restore a muted user to default privilege (admin) |
+
+---
+
+### Channels (`08_channels`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!channels` | DM | List channel slots enumerated from the radio |
+| `!channel <idx> on\|off` | DM | Enable or disable bot responses on a channel slot (admin) |
+| `!channel sync` | DM | Re-enumerate channels from the radio (admin) |
 
 ---
 
@@ -90,7 +216,6 @@ sudo nano /opt/meshhall/config/config.yaml
 ```bash
 sudo nano /opt/meshhall/config/plugins/weather.yaml      # zone, lat/lon, alert channel
 sudo nano /opt/meshhall/config/plugins/frequencies.yaml  # seed frequency data
-sudo nano /opt/meshhall/config/plugins/checkin.yaml      # optional tuning
 sudo nano /opt/meshhall/config/plugins/bulletin.yaml     # optional tuning
 sudo nano /opt/meshhall/config/plugins/replay.yaml       # optional tuning
 ```
@@ -240,19 +365,19 @@ core/
   ratelimit.py              Token bucket rate limiter for channel commands
 plugins/
   01_time.py                !time
-  02_checkin.py             !checkin !status !missing !roll
   03_bulletin.py            !post !bulletins !bulletin !delbul
   04_frequencies.py         !freqs !freq !addfreq !delfreq
   05_weather.py             !wx !alerts !alert
   06_replay.py              !replay !search
   07_users.py               !whois !users !setpriv !mute !unmute
   08_channels.py            !channels !channel
+  09_motd.py                !motd !setmotd !clearmotd
+  10_stats.py               !stats
   _template.py              Copy this to create new plugins
 config/
   config.yaml               Main settings (connection, bot identity, logging)
   plugins/
     bulletin.yaml           Bulletin plugin tuning
-    checkin.yaml            Check-in plugin tuning
     frequencies.yaml        Frequency plugin tuning and seed data
     replay.yaml             Replay plugin tuning
     time.yaml               Time plugin tuning
@@ -263,6 +388,7 @@ deploy/
 data/                       Created at runtime (owned by meshhall user)
   meshhall.db               SQLite database (WAL mode)
   meshhall.log              Log file
+  zip_code_database.csv     ZIP centroid data for !wx <zip> (operator-provided)
 ```
 
 > **NOAA SAME/EAS offline alerts** (RTL-SDR decoder) has been moved to a

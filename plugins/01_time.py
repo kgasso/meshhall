@@ -35,4 +35,4 @@ def setup(dispatcher, config, db):
         scope="channel",
         priv_floor=PRIV_DEFAULT,
         category="utility", plugin_name="time",
-    )
+        allow_channel=True)

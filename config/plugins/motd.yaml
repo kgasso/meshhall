@@ -1,0 +1,21 @@
+# config/plugins/motd.yaml
+
+# Maximum MOTD length in characters.
+# The MOTD is chunked automatically at the 156-byte firmware limit, so messages
+# longer than one chunk will arrive as multi-part DMs. 300 characters fits
+# comfortably within 2 chunks for ASCII text; multibyte characters (emoji etc.)
+# count for more bytes so keep the text concise.
+max_length: 300
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  motd:      direct  # default: direct [locked — DM only]
+  setmotd:   direct  # default: direct [locked — admin action, DM only]
+  clearmotd: direct  # default: direct [locked — admin action, DM only]

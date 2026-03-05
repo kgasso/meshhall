@@ -1,0 +1,16 @@
+# config/plugins/stats.yaml
+
+# ── Command privileges ────────────────────────────────────────────────────────
+privileges:
+  stats: 15           # floor: 15 — admin only
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  stats: direct       # default: direct [locked — admin only, DM only]

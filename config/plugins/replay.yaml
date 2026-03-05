@@ -6,3 +6,15 @@ max_messages: 100
 privileges:
   replay: 1         # floor: 1 — anyone can replay channel history
   search: 1         # floor: 1 — anyone can search message history
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+scopes:
+  replay: channel   # default: channel [configurable — can restrict to direct]
+  search: channel   # default: channel [configurable — can restrict to direct]

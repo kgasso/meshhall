@@ -63,6 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_users_name ON users(display_name);
 # Schema migrations — run on every startup; idempotent (column-exists errors ignored).
 _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN welcomed_ts INTEGER",
+    "ALTER TABLE users ADD COLUMN home_zip TEXT",
 ]
 
 
@@ -236,6 +237,22 @@ class Database:
         result = await self.execute(
             "UPDATE users SET privilege=? WHERE pubkey_prefix=?",
             (privilege, pubkey_prefix),
+        )
+        await self.commit()
+        return result.rowcount > 0
+
+    async def get_home_zip(self, pubkey_prefix: str) -> Optional[str]:
+        """Return the user's stored home ZIP code, or None if not set."""
+        row = await self.fetchone(
+            "SELECT home_zip FROM users WHERE pubkey_prefix=?", (pubkey_prefix,)
+        )
+        return row["home_zip"] if row else None
+
+    async def set_home_zip(self, pubkey_prefix: str, zipcode: str) -> bool:
+        """Persist a home ZIP code for the user. Returns False if user not found."""
+        result = await self.execute(
+            "UPDATE users SET home_zip=? WHERE pubkey_prefix=?",
+            (zipcode, pubkey_prefix),
         )
         await self.commit()
         return result.rowcount > 0

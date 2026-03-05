@@ -84,7 +84,7 @@ def setup(dispatcher, config, db):
         help_text="List recent bulletins",
         usage_text="!bulletins [count]",
         scope="direct", priv_floor=PRIV_DEFAULT, category="bulletin", plugin_name="bulletin",
-    )
+        allow_channel=True)
 
     async def cmd_bulletin(msg):
         try:
@@ -102,7 +102,7 @@ def setup(dispatcher, config, db):
         help_text="Read a bulletin by ID",
         usage_text="!bulletin <id>",
         scope="direct", priv_floor=PRIV_DEFAULT, category="bulletin", plugin_name="bulletin",
-    )
+        allow_channel=True)
 
     async def cmd_delbul(msg):
         try:

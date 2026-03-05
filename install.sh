@@ -217,6 +217,86 @@ fi
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/config"
 
+# ── Data files ────────────────────────────────────────────────────────────────
+header "Data Files"
+
+# Enumerated data files shipped with the release.
+# On fresh install: always copy. On upgrade: warn and prompt if file differs,
+# same as config handling — an operator may have substituted their own dataset.
+#
+# NOTE: data files live in the source root (one level up from deploy/),
+# so we reference them via SOURCE_ROOT rather than SCRIPT_DIR.
+SOURCE_ROOT="$SCRIPT_DIR"  # install.sh lives at source root
+
+DATA_FILES=(
+    "data/zip_code_database.csv"
+)
+
+DATA_DIFFS=()   # data files that exist in both and differ
+DATA_NEW=()     # data files not yet present in install dir
+
+mkdir -p "$INSTALL_DIR/data"
+
+for rel in "${DATA_FILES[@]}"; do
+    src_file="$SOURCE_ROOT/$rel"
+    dst_file="$INSTALL_DIR/$rel"
+
+    if [ ! -f "$src_file" ]; then
+        warn "Source data file missing: $rel — skipping."
+        continue
+    fi
+
+    if $FRESH_INSTALL || [ ! -f "$dst_file" ]; then
+        DATA_NEW+=("$rel")
+    elif ! diff -q "$src_file" "$dst_file" &>/dev/null; then
+        DATA_DIFFS+=("$rel")
+    else
+        ok "$rel — unchanged."
+    fi
+done
+
+# Copy new/missing data files automatically
+if [ ${#DATA_NEW[@]} -gt 0 ]; then
+    for rel in "${DATA_NEW[@]}"; do
+        info "Installing $rel..."
+        cp "$SOURCE_ROOT/$rel" "$INSTALL_DIR/$rel"
+        chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$rel"
+        ok "$rel installed."
+    done
+fi
+
+# Warn about changed data files — prompt before overwriting
+if [ ${#DATA_DIFFS[@]} -gt 0 ]; then
+    echo ""
+    warn "The following data files differ from the release version:"
+    for rel in "${DATA_DIFFS[@]}"; do
+        src_size=$(wc -l < "$SOURCE_ROOT/$rel")
+        dst_size=$(wc -l < "$INSTALL_DIR/$rel")
+        echo "    ~ $rel  (installed: ${dst_size} lines, release: ${src_size} lines)"
+    done
+    echo ""
+    warn "You may have a customised dataset installed. The release version will"
+    warn "not be copied unless you confirm below."
+    echo ""
+
+    for rel in "${DATA_DIFFS[@]}"; do
+        if confirm "Replace installed $rel with release version?" "default_no"; then
+            # Save a backup of the existing file before overwriting
+            bak="$INSTALL_DIR/${rel}.bak"
+            cp "$INSTALL_DIR/$rel" "$bak"
+            chown "$SERVICE_USER:$SERVICE_USER" "$bak"
+            info "Backup saved: $bak"
+            cp "$SOURCE_ROOT/$rel" "$INSTALL_DIR/$rel"
+            chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$rel"
+            ok "$rel updated."
+        else
+            info "$rel unchanged — keeping installed version."
+        fi
+    done
+fi
+
+chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data"
+
 # ── Deploy code ───────────────────────────────────────────────────────────────
 header "Deploying Code"
 
