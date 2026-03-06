@@ -15,6 +15,58 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 
 ---
 
+## [v0.9.0] — 2026-03-05
+
+### Added
+- **`02_nets` plugin** — Full net management system replacing the removed
+  `02_checkin` plugin. Features:
+  - Named nets with hyphenated slug identifiers (e.g. `ares-district-5`)
+  - Per-net channel binding; `!checkin` in a bound channel auto-resolves the net
+  - `!net checkin <net>` / `!checkin <net>` — auto-resolves via channel binding
+    or single-net membership
+  - `!net regrets <net>` / `!regrets <net>` — register planned absence
+  - `!net roll [net] [YYYY-MM-DD]` / `!roll` — full roll call, current/recent
+    by default, historical by date
+  - `!net list` / `!net info <net>` — list and inspect nets
+  - Recurring sessions via cron expressions (`croniter>=2.0.0`); human-readable
+    input (`weekly tuesday 19:00`, `monthly 3rd tuesday 19:00`, `daily 08:00`)
+    translated to cron internally
+  - Per-net timezone (IANA strings); defaults to `bot.timezone` in `config.yaml`
+  - Per-net session duration; sessions open and close automatically
+  - Bot announces session open/close in bound channel
+  - Per-net net control ACL (`!net grant` / `!net revoke`) — designated operators
+    can manage their net without global admin privilege
+  - Guest check-ins per net (`allow_guests` flag on `!net create`); guests shown
+    distinctly in `!net roll`
+  - `!net promote <net> <user>` — promote a guest to full member
+  - Net creation privilege configurable in `nets.yaml` (default 15, floor 2)
+- **`croniter>=2.0.0`** added to `requirements.txt`
+- **Generic command alias system** — define shorthand aliases for any registered
+  command in `config.yaml` under `aliases:`. Aliases inherit scope, privilege,
+  and all properties from their target. No chaining, no collision with real
+  commands. Changes take effect on `!rehash`.
+- **`.gitignore`** — excludes `data/meshhall.db`, `data/meshhall.log`, `venv/`,
+  `__pycache__/`, `*.pyc`, editor artifacts.
+
+### Changed
+- **`!net` subcommand dispatcher** — all net management commands consolidated
+  under `!net <subcommand>`. Standalone shortcuts `!checkin`, `!regrets`, `!roll`
+  retained for ergonomics.
+- **`!bulletin` subcommand dispatcher** — `!post`, `!bulletins`, `!bulletin <id>`,
+  `!delbul` replaced by `!bulletin <list|show|post|delete>`. Shortcuts `!post`
+  and `!bulletins` retained.
+- **`!freq` subcommand dispatcher** — `!freqs`, `!freq <n>`, `!addfreq`,
+  `!delfreq` replaced by `!freq <list|show|add|delete>`. Shortcut `!freqs`
+  retained.
+- **`!channel` subcommand dispatcher** — `!channels` (list) and `!channel`
+  (admin control) merged into `!channel <list|set|sync>`.
+- **`!replay` subcommand dispatcher** — `!replay` and `!search` consolidated
+  into `!replay <list|search>`. Shortcut `!search` retained.
+- **`!help` index** — aliases excluded from listing. `!help <alias>` still
+  works and notes the alias relationship.
+
+---
+
 ## [v0.8.2] — 2026-03-04
 
 ### Removed

@@ -133,6 +133,7 @@ class CommandEntry(NamedTuple):
     category:      str          # help grouping — "core" always listed first, rest alphabetical
     usage_text:    str  = ""    # extended usage shown in !help <cmd>
     allow_channel: bool = False # if True, a "direct" default can be widened to "channel" via config
+    is_shortcut:   bool = False # if True, hidden from !help index; discoverable via !help <cmd>
 
 # Sentinel used when a plugin doesn't specify a category
 _CAT_CORE  = "core"
@@ -147,6 +148,7 @@ class Dispatcher:
         self.config = config
         self.db     = db
         self._commands: Dict[str, CommandEntry] = {}
+        self._aliases:  Dict[str, str] = {}   # alias_key → canonical_key
         self._listeners: List[HandlerFn] = []
         self._rehash_callbacks: List = []
         self._reply_queue: asyncio.Queue = asyncio.Queue()
@@ -463,6 +465,7 @@ class Dispatcher:
                          category:      str  = "",
                          usage_text:    str  = "",
                          allow_channel: bool = False,
+                         is_shortcut:   bool = False,
                          # Legacy compat
                          min_privilege: int  = None):
         # Legacy: allow_channel=True at registration time still forces scope
@@ -488,6 +491,7 @@ class Dispatcher:
             category=cat,
             usage_text=usage_text,
             allow_channel=allow_channel,
+            is_shortcut=is_shortcut,
         )
         logger.debug(
             f"Registered: {key} scope={scope} floor={priv_floor} "
@@ -521,6 +525,97 @@ class Dispatcher:
 
     def register_rehash_callback(self, fn):
         self._rehash_callbacks.append(fn)
+
+    def register_alias(self, alias: str, target: str, *, from_config: bool = False) -> bool:
+        """
+        Register alias_key → target_key in the command table.
+
+        alias  : the new command name, with or without leading '!' (e.g. "ci" or "!ci")
+        target : the existing command to point at (e.g. "checkin" or "!checkin")
+
+        Rules:
+          - Target must already be registered.
+          - Alias must not collide with a real (non-alias) command.
+          - Alias must not point at another alias (no chaining).
+          - from_config=True aliases are tracked so they can be cleared on rehash.
+
+        Returns True on success, False on any validation failure (logged as warning).
+        """
+        alias_key  = "!" + alias.lstrip("!")
+        target_key = "!" + target.lstrip("!")
+
+        # Target must exist as a real command
+        target_entry = self._commands.get(target_key)
+        if not target_entry:
+            logger.warning(
+                f"Alias '{alias_key}' → '{target_key}': target not found — skipping."
+            )
+            return False
+
+        # Target must not itself be an alias
+        if target_key in self._aliases.values() or target_key in self._aliases:
+            # target_key is an alias key — reject
+            if target_key in self._aliases:
+                logger.warning(
+                    f"Alias '{alias_key}' → '{target_key}': target is itself an alias — "
+                    "chaining not allowed, skipping."
+                )
+                return False
+
+        # Alias must not shadow a real command
+        if alias_key in self._commands and alias_key not in self._aliases:
+            logger.warning(
+                f"Alias '{alias_key}' → '{target_key}': name collides with a real "
+                "command — skipping."
+            )
+            return False
+
+        self._aliases[alias_key] = target_key
+        # Register in command table pointing at same entry so dispatch resolves normally
+        self._commands[alias_key] = target_entry
+        source = "config" if from_config else "plugin"
+        logger.debug(f"Alias registered ({source}): {alias_key} → {target_key}")
+        return True
+
+    def _clear_config_aliases(self):
+        """Remove all aliases that were loaded from config (called before rehash reload)."""
+        # We track config aliases by storing them in a separate set
+        for alias_key in list(getattr(self, "_config_alias_keys", set())):
+            self._aliases.pop(alias_key, None)
+            # Only remove from _commands if it's still pointing at an alias target
+            # (a plugin may have registered a real command with the same name after)
+            if alias_key in self._commands and alias_key in self._aliases or \
+               alias_key not in self._commands:
+                self._commands.pop(alias_key, None)
+        self._config_alias_keys: set = set()
+
+    def load_config_aliases(self):
+        """
+        Read aliases from config.yaml and register them.
+        Called after all plugins have loaded, and again on rehash.
+        Format in config.yaml:
+          aliases:
+            absent: regrets
+            ci: checkin
+        """
+        if not hasattr(self, "_config_alias_keys"):
+            self._config_alias_keys: set = set()
+
+        aliases = self.config.get("aliases", {}) or {}
+        if not isinstance(aliases, dict):
+            logger.warning("config.yaml 'aliases' must be a mapping — skipping.")
+            return
+
+        registered = 0
+        for alias, target in aliases.items():
+            alias_key = "!" + str(alias).lstrip("!")
+            ok = self.register_alias(alias, str(target), from_config=True)
+            if ok:
+                self._config_alias_keys.add(alias_key)
+                registered += 1
+
+        if registered:
+            logger.info(f"Loaded {registered} command alias(es) from config.")
 
     def log_admin_attempt(self, command: str, msg: Message,
                           granted: bool, reason: str = ""):
@@ -737,7 +832,7 @@ class Dispatcher:
                     command_char: str = "!") -> str:
         """
         Simplified summary help — one line per command, no categories.
-        Admin commands are excluded from the index entirely.
+        Admin commands and aliases are excluded from the index entirely.
         Admins get a note directing them to !help admin for their commands.
         Disabled commands are hidden regardless of privilege.
         """
@@ -745,10 +840,15 @@ class Dispatcher:
 
         if privilege >= PRIV_ADMIN:
             lines.append(f"Use {command_char}help admin for admin commands.\n")
+
         for stored_cmd, entry in sorted(self._commands.items()):
             if not entry.help_text:
                 continue
             if entry.is_admin:
+                continue
+            if stored_cmd in self._aliases:
+                continue
+            if entry.is_shortcut:
                 continue
             effective_scope = self.resolve_scope(entry)
             if effective_scope == "disabled":
@@ -777,6 +877,10 @@ class Dispatcher:
                 continue
             if not entry.help_text:
                 continue
+            if stored_cmd in self._aliases:
+                continue
+            if entry.is_shortcut:
+                continue
             effective_scope = self.resolve_scope(entry)
             if effective_scope == "disabled":
                 continue
@@ -791,16 +895,21 @@ class Dispatcher:
     def _build_command_help(self, query: str, privilege: int,
                              command_char: str = "!") -> str:
         """
-        Context-sensitive help for a single command.
+        Context-sensitive help for a single command or alias.
         Returns full description + usage + scope info.
         Disabled commands are treated as unknown — silent from the user's view.
         """
         stored_cmd = "!" + query.lstrip("!")
-        entry = self._commands.get(stored_cmd)
+
+        # Resolve alias — one level only, no chaining
+        is_alias   = stored_cmd in self._aliases
+        target_key = self._aliases.get(stored_cmd, stored_cmd)
+        entry      = self._commands.get(target_key)
+
         if not entry:
             return f"Unknown command: {command_char}{query}"
 
-        # Treat disabled the same as unknown — don't confirm its existence.
+        # Treat disabled the same as unknown
         if self.resolve_scope(entry) == "disabled":
             return f"Unknown command: {command_char}{query}"
 
@@ -808,11 +917,16 @@ class Dispatcher:
         if privilege < eff_priv:
             return f"Access denied. {command_char}{query} requires privilege {eff_priv}."
 
-        display_cmd = command_char + stored_cmd.lstrip("!")
+        display_cmd = command_char + target_key.lstrip("!")
         lines = [f"{display_cmd}: {entry.help_text}"]
+        if is_alias:
+            alias_display = command_char + stored_cmd.lstrip("!")
+            lines.append(f"(Alias: {alias_display} → {display_cmd})")
+        elif entry.is_shortcut:
+            lines.append(f"(Shortcut — see {display_cmd} for full usage)")
         if entry.usage_text:
             lines.append(f"Usage: {entry.usage_text}")
-        eff_scope = self.resolve_scope(entry)
+        eff_scope  = self.resolve_scope(entry)
         scope_note = "DM or channel" if eff_scope == "channel" else "DM only"
         lines.append(f"Scope: {scope_note} | Priv: {eff_priv}")
         return "\n".join(lines)
@@ -836,6 +950,10 @@ class Dispatcher:
             await self.db.set_privilege(admin_id, PRIV_ADMIN)
         if admin_ids:
             results.append(f"Admin privileges refreshed for {len(admin_ids)} user(s).")
+
+        # Reload config-defined aliases (clear old ones first)
+        self._clear_config_aliases()
+        self.load_config_aliases()
 
         for cb in self._rehash_callbacks:
             try:

@@ -64,6 +64,9 @@ async def main():
     loader = PluginLoader(dispatcher, config, db)
     loader.load_all("plugins")
 
+    # Load config-defined aliases now that all plugins are registered.
+    dispatcher.load_config_aliases()
+
     # Register !version command now that loader is populated
     _register_version_cmd(dispatcher, loader)
 

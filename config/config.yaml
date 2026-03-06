@@ -122,3 +122,22 @@ channels:
     # The warning is the last message sent before silent drop begins.
     # Per-channel exhaustion always drops silently regardless of this flag.
     warn_on_limit: true
+
+# ── Command aliases ───────────────────────────────────────────────────────────
+# Define shorthand aliases for any registered command.
+# Format: alias: target  (both without the leading ! prefix)
+# Rules:
+#   - Target must be a registered command (plugin must be loaded).
+#   - Alias must not collide with an existing command name.
+#   - Aliases cannot point to other aliases (no chaining).
+#   - Aliases inherit all properties from the target (scope, privilege, etc.).
+#   - Changes take effect on !rehash without a restart.
+#
+# Example:
+#   aliases:
+#     absent: regrets     # !absent → !regrets
+#     ci: checkin         # !ci → !checkin
+#
+# Uncomment and customize:
+# aliases:
+#   absent: regrets

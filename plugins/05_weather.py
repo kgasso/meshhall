@@ -2,11 +2,10 @@
 Plugin: Weather / NWS
 Commands:
   !wx [periods]    — Forecast for the bot's home ZIP (or user's !setloc ZIP)
-  !wx <zip>        — NWS forecast for a specific US ZIP code
-  !alerts          — Active NWS alerts for the home ZIP (or user's !setloc ZIP)
-  !alerts <zip>    — Active NWS alerts for a specific US ZIP code
-  !alert <id>      — Read full alert text
-  !setloc <zip>    — Save your home ZIP code for personalised !wx and !alerts
+  !wx [zip] [periods]       — NWS forecast; ZIP and/or 1-8 periods (default 2)
+  !wxalert [list|show] ...  — Active NWS/EAS alerts; list [zip] or show <id>
+  !alerts [zip]             — Shortcut for !wxalert list
+  !setloc <zip>             — Save your home ZIP code for personalised !wx and !wxalert
   !setloc clear    — Remove your saved home ZIP
   !wxrefresh       — (Admin) Force immediate NWS data refresh
 
@@ -540,121 +539,105 @@ def setup(dispatcher, config, db):
     # ── !wx ───────────────────────────────────────────────────────────────────
 
     async def cmd_wx(msg):
-        arg = msg.arg_str.strip()
+        """
+        Arg parsing:
+          !wx                   → user setloc ZIP (or bot home ZIP), 2 periods
+          !wx <zip>             → explicit ZIP, 2 periods
+          !wx <periods>         → user setloc ZIP (or bot home ZIP), N periods
+          !wx <zip> <periods>   → explicit ZIP, N periods
+        """
+        raw_args = msg.arg_str.strip().split()
 
-        # ── ZIP code path — explicit arg or user's saved home ZIP ─────────────
-        # Determine the target ZIP: explicit arg takes priority, then setloc.
-        target_zip = None
-        if arg and arg.isdigit() and len(arg) == 5:
-            target_zip = arg.zfill(5)
-        elif not arg:
-            target_zip = await db.get_home_zip(msg.sender_id)
+        # Parse tokens: any 5-digit token is a ZIP, any 1-2 digit 1-8 token is periods
+        explicit_zip = None
+        n_periods    = None
 
-        if target_zip:
-            if not _zip_table:
-                return _zip_unavailable_msg()
-
-            coords = _resolve_zip(target_zip)
-            if not coords:
-                if arg:
-                    return f"ZIP {target_zip} not found. Try !wx for the local forecast."
-                else:
-                    return (
-                        f"Your saved ZIP {target_zip} wasn't found in the database. "
-                        "Use !setloc clear to reset or !setloc <zip> to update."
-                    )
-
-            lat, lon, _, _ = coords
-            zone_key = f"zip:{target_zip}"
-            ttl      = _cfg().get("zip_cache_ttl", ZIP_CACHE_TTL)
-            location = _zip_label(target_zip, coords)
-
-            row = await db.fetchone(
-                "SELECT ts, raw FROM wx_forecast WHERE zone=? ORDER BY ts DESC LIMIT 1",
-                (zone_key,),
-            )
-            cache_fresh = row and (_now() - row["ts"]) < ttl
-
-            if not cache_fresh:
-                success = await _fetch_forecast_for(lat, lon, zone_key)
-                if success:
-                    row = await db.fetchone(
-                        "SELECT ts, raw FROM wx_forecast WHERE zone=? ORDER BY ts DESC LIMIT 1",
-                        (zone_key,),
-                    )
-                elif not row:
-                    return (
-                        f"NWS is unreachable and no cached forecast exists for {location}. "
-                        "Try again later or use !wx for the local forecast."
-                    )
-
-            stale = not cache_fresh and row and not (
-                await db.fetchone(
-                    "SELECT id FROM wx_forecast WHERE zone=? AND ts>?",
-                    (zone_key, _now() - ttl),
+        for token in raw_args:
+            if token.isdigit() and len(token) == 5:
+                explicit_zip = token.zfill(5)
+            elif token.isdigit() and 1 <= int(token) <= 8:
+                n_periods = int(token)
+            else:
+                return (
+                    "Usage: !wx [zip] [periods]\n"
+                    "  zip     — 5-digit US ZIP code\n"
+                    "  periods — 1-8 forecast periods (default 2)"
                 )
-            )
-            return _build_forecast_response(row, n_periods=2, stale=stale,
-                                            location=location)
 
-        # ── Home ZIP path ─────────────────────────────────────────────────────
-        home_zip = _cfg().get("home_zip", "").strip().zfill(5) if _cfg().get("home_zip") else ""
-        if not home_zip:
-            return "Weather not configured. Set home_zip in config/plugins/weather.yaml"
+        if n_periods is None:
+            n_periods = 2
+
+        # Resolve ZIP: explicit → user setloc → bot home ZIP
+        target_zip = explicit_zip
+        if not target_zip:
+            target_zip = await db.get_home_zip(msg.sender_id)
+        if not target_zip:
+            target_zip = _cfg().get("home_zip", "").strip().zfill(5) if _cfg().get("home_zip") else ""
+
+        if not target_zip:
+            return "No ZIP configured. Use !setloc <zip> to set your home ZIP."
 
         if not _zip_table:
             return _zip_unavailable_msg()
 
-        coords = _resolve_zip(home_zip)
+        coords = _resolve_zip(target_zip)
         if not coords:
-            return (
-                f"home_zip {home_zip} not found in ZIP table. "
-                "Check weather.yaml and !rehash."
-            )
+            if explicit_zip:
+                return f"ZIP {target_zip} not found."
+            else:
+                return (
+                    f"Your home ZIP {target_zip} wasn't found in the database. "
+                    "Use !setloc <zip> to update."
+                )
 
         lat, lon, _, _ = coords
-        zone_key = f"zip:{home_zip}"
-        location = _zip_label(home_zip, coords)
-
-        try:
-            n_periods = max(1, min(int(arg), 8)) if arg else 2
-        except ValueError:
-            return "Usage: !wx [periods|zip]  — periods 1-8 or a 5-digit US ZIP code"
+        zone_key = f"zip:{target_zip}"
+        ttl      = _cfg().get("zip_cache_ttl", ZIP_CACHE_TTL)
+        location = _zip_label(target_zip, coords)
 
         row = await db.fetchone(
             "SELECT ts, raw FROM wx_forecast WHERE zone=? ORDER BY ts DESC LIMIT 1",
             (zone_key,),
         )
-        if not row:
-            await _fetch_forecast_for(lat, lon, zone_key)
-            row = await db.fetchone(
-                "SELECT ts, raw FROM wx_forecast WHERE zone=? ORDER BY ts DESC LIMIT 1",
-                (zone_key,),
-            )
-        if not row:
-            return "NWS is unreachable and no cached forecast exists. Use !alerts for cached alerts."
+        cache_fresh = row and (_now() - row["ts"]) < ttl
 
-        forecast_interval = _cfg().get("forecast_interval", 3600)
-        stale = (_now() - row["ts"]) > int(forecast_interval * 1.5)
-        return _build_forecast_response(row, n_periods, stale=stale, location=location)
+        if not cache_fresh:
+            success = await _fetch_forecast_for(lat, lon, zone_key)
+            if success:
+                row = await db.fetchone(
+                    "SELECT ts, raw FROM wx_forecast WHERE zone=? ORDER BY ts DESC LIMIT 1",
+                    (zone_key,),
+                )
+            elif not row:
+                return f"NWS is unreachable and no cached forecast for {location}. Try again later."
+
+        stale = not cache_fresh and row and not (
+            await db.fetchone(
+                "SELECT id FROM wx_forecast WHERE zone=? AND ts>?",
+                (zone_key, _now() - ttl),
+            )
+        )
+        return _build_forecast_response(row, n_periods=n_periods, stale=stale, location=location)
 
     dispatcher.register_command(
         "!wx", cmd_wx,
-        help_text="NWS forecast for your area, a ZIP code, or the local area",
+        help_text="NWS forecast for your area or any US ZIP code",
         usage_text=(
-            "!wx             — forecast for your !setloc ZIP (or local area if not set)\n"
-            "!wx [periods]   — 1-8 forecast periods for local area (default 2)\n"
-            "!wx <zip>       — forecast for any US ZIP code"
+            "!wx                  — forecast for your !setloc ZIP (or bot default)\n"
+            "!wx <zip>            — forecast for any US ZIP code\n"
+            "!wx [periods]        — 1-8 periods for your home ZIP (default 2)\n"
+            "!wx <zip> [periods]  — ZIP + period count"
         ),
         scope="direct", priv_floor=1, category="weather", plugin_name="weather",
         allow_channel=True)
 
-    # ── !alerts ───────────────────────────────────────────────────────────────
+    # ── !wxalert ──────────────────────────────────────────────────────────────
 
-    async def cmd_alerts(msg):
-        arg = msg.arg_str.strip()
+    async def do_wxalert_list(msg, args=""):
+        """List active NWS alerts for a ZIP or the user's home area."""
+        arg = args.strip()
 
-        # Determine target: explicit ZIP arg, then user's setloc, then home zone.
+        # Resolve ZIP: explicit arg → user setloc → bot home ZIP
         target_zip = None
         if arg and arg.isdigit() and len(arg) == 5:
             target_zip = arg.zfill(5)
@@ -677,25 +660,19 @@ def setup(dispatcher, config, db):
 
             lat, lon, _, _ = coords
             label    = _zip_label(target_zip, coords)
-
-            # Fetch live alerts for this point from NWS.
             features = await _fetch_alerts_for_point(lat, lon)
             if features is None:
-                return "NWS is unreachable. Try again later or use !alerts for cached home-zone alerts."
+                return "NWS is unreachable. Try again later or use !wxalert list for cached alerts."
 
-            # Persist first (dedup-safe) so every alert gets a real DB id,
-            # then query back by event_id to build the response. This ensures
-            # !alert <id> always works for alerts discovered via !alerts <zip>.
             await _store_alert_features(features)
 
-            # Collect event_ids from the live response to query their DB rows.
             event_ids = [
                 (f.get("properties", {}).get("id") or f.get("id"))
                 for f in features
                 if (f.get("properties", {}).get("id") or f.get("id"))
             ]
             if not event_ids:
-                return f"No active alerts for {label}. \u2713"
+                return f"No active alerts for {label}. ✓"
 
             placeholders = ",".join("?" * len(event_ids))
             rows = await db.fetchall(
@@ -708,13 +685,13 @@ def setup(dispatcher, config, db):
             )
             return _build_alerts_response(rows, label)
 
-        # ── Home ZIP path — served from DB cache ──────────────────────────────
+        # ── Home zone fallback — served from DB cache ─────────────────────────
         home_zip = _cfg().get("home_zip", "").strip().zfill(5) if _cfg().get("home_zip") else ""
         if home_zip and _zip_table:
             coords = _resolve_zip(home_zip)
             label  = _zip_label(home_zip, coords) if coords else f"ZIP {home_zip}"
         else:
-            label  = "configured area"
+            label = "configured area"
         rows = await db.fetchall(
             """SELECT id, source, event_type, headline, area, ts, expires
                FROM wx_alerts
@@ -724,26 +701,17 @@ def setup(dispatcher, config, db):
         )
         return _build_alerts_response(rows, label)
 
-    dispatcher.register_command(
-        "!alerts", cmd_alerts,
-        help_text="Active NWS/EAS alerts for your area or a ZIP code",
-        usage_text=(
-            "!alerts         — alerts for your !setloc ZIP (or home zone if not set)\n"
-            "!alerts <zip>   — alerts for any US ZIP code"
-        ),
-        scope="direct", priv_floor=1, category="weather", plugin_name="weather",
-        allow_channel=True)
-
-    async def cmd_alert(msg):
+    async def do_wxalert_show(msg, args=""):
+        """Show full text of a specific alert by ID."""
         try:
-            alert_id = int(msg.arg_str.strip())
+            alert_id = int(args.strip())
         except (ValueError, TypeError):
-            return "Usage: !alert <id>"
+            return "Usage: !wxalert show <id>"
         row = await db.fetchone("SELECT * FROM wx_alerts WHERE id=?", (alert_id,))
         if not row:
             return f"Alert #{alert_id} not found."
-        src = "SDR/SAME" if row["source"] == "same" else "NWS API"
-        exp = _fmt_ts(row["expires"]) if row["expires"] else "unknown"
+        src  = "SDR/SAME" if row["source"] == "same" else "NWS API"
+        exp  = _fmt_ts(row["expires"]) if row["expires"] else "unknown"
         text = f"Alert #{row['id']} via {src}\nType: {row['event_type'] or 'N/A'}\nExpires: {exp}\n"
         if row["area"]:
             text += f"Area: {row['area'][:120]}\n"
@@ -751,9 +719,49 @@ def setup(dispatcher, config, db):
             text += row["headline"][:200]
         return text
 
+    _WXALERT_SUBCOMMANDS = {
+        "list": do_wxalert_list,
+        "show": do_wxalert_show,
+    }
+
+    async def cmd_wxalert(msg, args=""):
+        parts = (args or msg.arg_str).strip().split(None, 1)
+        sub   = parts[0].lower() if parts else ""
+
+        # No subcommand — default to list
+        if not sub or (sub.isdigit() and len(sub) != 5):
+            # bare "!wxalert" or "!wxalert 4" (not a ZIP) → list
+            return await do_wxalert_list(msg, args or msg.arg_str)
+
+        handler = _WXALERT_SUBCOMMANDS.get(sub)
+        if not handler:
+            # Could be a bare ZIP passed directly — try list with full arg
+            if sub.isdigit() and len(sub) == 5:
+                return await do_wxalert_list(msg, (args or msg.arg_str))
+            cc = dispatcher.command_char
+            return f"Unknown subcommand '{sub}'. Use {cc}wxalert list [zip] or {cc}wxalert show <id>."
+
+        sub_args = parts[1] if len(parts) > 1 else ""
+        return await handler(msg, sub_args)
+
     dispatcher.register_command(
-        "!alert", cmd_alert,
-        help_text="Read an alert by ID",
-        usage_text="!alert <id>",
+        "!wxalert", cmd_wxalert,
+        help_text="Active NWS/EAS weather alerts for your area or a ZIP code",
+        usage_text=(
+            "!wxalert            — alerts for your !setloc ZIP (or home zone)\n"
+            "!wxalert list [zip] — active alerts for area or ZIP\n"
+            "!wxalert show <id>  — full alert text by ID"
+        ),
         scope="direct", priv_floor=1, category="weather", plugin_name="weather",
-    )
+        allow_channel=True)
+
+    async def cmd_alerts_shortcut(msg):
+        return await cmd_wxalert(msg, ("list " + msg.arg_str).strip())
+
+    dispatcher.register_command(
+        "!alerts", cmd_alerts_shortcut,
+        help_text="Active weather alerts (shortcut for !wxalert list)",
+        usage_text="!alerts [zip]  — use !wxalert for full usage",
+        scope="direct", priv_floor=1, category="weather", plugin_name="weather",
+        allow_channel=True, is_shortcut=True)
+

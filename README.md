@@ -365,6 +365,7 @@ core/
   ratelimit.py              Token bucket rate limiter for channel commands
 plugins/
   01_time.py                !time
+  02_nets.py                !checkin !regrets !roll !nets !netinfo !mknet !rmnet !addmember !delmember !promote !ncgrant !ncrevoke
   03_bulletin.py            !post !bulletins !bulletin !delbul
   04_frequencies.py         !freqs !freq !addfreq !delfreq
   05_weather.py             !wx !alerts !alert

@@ -5,7 +5,7 @@ Commands:
   !whois <name|id>     — Look up a user's registry record
   !users [filter]      — List known users with privilege levels
   !setpriv <id> <n>    — Set a user's privilege level (0-15)
-  !mute <id|name>      — Set privilege to 0 (shorthand for !setpriv ... 0)
+  !mute <id|name>      — Set privilege to 0 (cannot mute admins)
   !unmute <id|name>    — Restore privilege to 1 (shorthand for !setpriv ... 1)
 
 Privilege levels:
@@ -17,7 +17,7 @@ Privilege levels:
 Config: config/plugins/users.yaml
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -137,11 +137,18 @@ def setup(dispatcher, config, db):
         if not user:
             return f"No user found matching '{query}'."
 
-        # Prevent self-demotion from admin — safety rail
+        # Prevent self-demotion from admin
         if user["pubkey_prefix"] == msg.sender_id and new_priv < PRIV_ADMIN:
             return "You cannot reduce your own admin privilege."
 
+        # Prevent changing another admin's privilege — demote them first
         old_priv = user["privilege"]
+        if old_priv >= PRIV_ADMIN and user["pubkey_prefix"] != msg.sender_id:
+            return (
+                f"{user['display_name'] or user['pubkey_prefix']} is an admin. "
+                "Admins cannot have their privilege changed by another admin."
+            )
+
         await db.set_privilege(user["pubkey_prefix"], new_priv)
 
         name = user["display_name"] or user["pubkey_prefix"]
@@ -172,6 +179,12 @@ def setup(dispatcher, config, db):
             return f"No user found matching '{query}'."
         if user["pubkey_prefix"] == msg.sender_id:
             return "You cannot mute yourself."
+
+        if user["privilege"] >= PRIV_ADMIN:
+            return (
+                f"{user['display_name'] or user['pubkey_prefix']} is an admin and cannot be muted. "
+                "Use !setpriv to reduce their privilege first."
+            )
 
         name = user["display_name"] or user["pubkey_prefix"]
         await db.set_privilege(user["pubkey_prefix"], PRIV_MUTED)

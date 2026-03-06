@@ -1,0 +1,24 @@
+# config/plugins/nets.yaml
+
+# ── Net creation ──────────────────────────────────────────────────────────────
+# Minimum privilege level required to create a net with !net create.
+# Valid range: 2–15. Default: 15 (admin only).
+create_privilege: 15
+
+# ── Command scope ─────────────────────────────────────────────────────────────
+# Valid values (widest → narrowest): channel, direct, disabled
+#   channel  — responds in DMs and channels
+#   direct   — DM only
+#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# "channel" commands can be tightened to "direct" or "disabled" here.
+# "direct" commands marked [configurable] can be widened to "channel" here.
+# "direct" commands marked [locked] cannot be widened — but can be disabled.
+#
+# Note: scope applies to the !net dispatcher and !checkin/!regrets/!roll shortcuts.
+# All net management subcommands (create, delete, add, remove, etc.) are
+# DM-only by design and not individually configurable here.
+scopes:
+  net:      direct  # default: direct [configurable — can widen to channel]
+  checkin:  direct  # default: direct [configurable — can widen to channel]
+  roll:     direct  # default: direct [configurable — can widen to channel]
+  regrets:  direct  # default: direct [locked — DM only]
