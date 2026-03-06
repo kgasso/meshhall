@@ -563,7 +563,7 @@ def setup(dispatcher, config, db):
     async def do_regrets(msg, args=""):
         slug = args.strip().lower()
         if not slug:
-            return "Usage: !regrets <net>"
+            return "Usage: !net regrets <net>"
 
         net = await _get_net(slug)
         if not net:
@@ -1124,25 +1124,40 @@ def setup(dispatcher, config, db):
         sub   = parts[0].lower() if parts else ""
 
         if not sub:
-            cc = dispatcher.command_char
+            cc        = dispatcher.command_char
+            privilege = await db.get_privilege(msg.sender_id)
+            is_nc     = bool(await db.fetchone(
+                "SELECT 1 FROM net_control WHERE pubkey_prefix=?", (msg.sender_id,)
+            ))
+            is_admin  = privilege >= PRIV_ADMIN
+
             lines = [f"Net commands — use {cc}net <subcommand>:"]
+            # Everyone
             lines += [
                 f"  {cc}net list                        — list all active nets",
                 f"  {cc}net info <slug>                 — net details and schedule",
                 f"  {cc}net checkin [slug]              — check in to a net (shortcut: {cc}checkin)",
                 f"  {cc}net regrets <slug>              — register planned absence (shortcut: {cc}regrets)",
                 f"  {cc}net roll [slug] [YYYY-MM-DD]    — roll call (shortcut: {cc}roll)",
-                f"  {cc}net start <slug>                — open a session manually (net control/admin)",
-                f"  {cc}net stop <slug>                 — close a session manually (net control/admin)",
-                f"  {cc}net schedule <slug> <schedule>  — set or clear recurrence (net control/admin)",
-                f"  {cc}net create <slug> <n> ...       — create a net (net control/admin)",
-                f"  {cc}net delete <slug>               — deactivate a net (net control/admin)",
-                f"  {cc}net add <net> <user>            — add member (net control/admin)",
-                f"  {cc}net remove <net> <user>         — remove member (net control/admin)",
-                f"  {cc}net promote <net> <user>        — promote guest to member",
-                f"  {cc}net grant <net> <user>          — grant net control (admin)",
-                f"  {cc}net revoke <net> <user>         — revoke net control (admin)",
             ]
+            # Net control or admin
+            if is_nc or is_admin:
+                lines += [
+                    f"  {cc}net start <slug>                — open a session manually",
+                    f"  {cc}net stop <slug>                 — close a session manually",
+                    f"  {cc}net schedule <slug> <schedule>  — set or clear recurrence",
+                    f"  {cc}net add <net> <user>            — add member",
+                    f"  {cc}net remove <net> <user>         — remove member",
+                    f"  {cc}net promote <net> <user>        — promote guest to member",
+                ]
+            # Admin only
+            if is_admin:
+                lines += [
+                    f"  {cc}net create <slug> <n> ...       — create a net",
+                    f"  {cc}net delete <slug>               — deactivate a net",
+                    f"  {cc}net grant <net> <user>          — grant net control",
+                    f"  {cc}net revoke <net> <user>         — revoke net control",
+                ]
             return "\n".join(lines)
 
         handler = _SUBCOMMANDS.get(sub)
@@ -1164,6 +1179,28 @@ def setup(dispatcher, config, db):
         "!net", cmd_net,
         help_text="Net management — named check-in nets with recurring sessions",
         usage_text="!net <subcommand>  |  !net for full subcommand list",
+        scope="direct", priv_floor=PRIV_DEFAULT,
+        category="nets", plugin_name="nets", allow_channel=True,
+    )
+
+    # ── !net open / !net close — hidden aliases for start/stop ─────────────────
+    # Registered with empty help_text so they're invisible in !help index.
+
+    async def cmd_net_open(msg):
+        return await cmd_net(msg, ("start " + msg.arg_str).strip())
+
+    async def cmd_net_close(msg):
+        return await cmd_net(msg, ("stop " + msg.arg_str).strip())
+
+    dispatcher.register_command(
+        "!open", cmd_net_open,
+        help_text="",
+        scope="direct", priv_floor=PRIV_DEFAULT,
+        category="nets", plugin_name="nets", allow_channel=True,
+    )
+    dispatcher.register_command(
+        "!close", cmd_net_close,
+        help_text="",
         scope="direct", priv_floor=PRIV_DEFAULT,
         category="nets", plugin_name="nets", allow_channel=True,
     )

@@ -60,12 +60,10 @@ def setup(dispatcher, config, db):
         name = msg.sender_name or msg.sender_id
         return f"Hello, {name}! You said: {msg.arg_str or '(nothing)'}"
 
-    dispatcher.register_command(
-        "!example",
-        cmd_example,
-        help_text="Example command. Usage: !example [text]",
-        allow_channel=False,   # True = also responds in channels, not just DMs
-    )
+    # Registration commented out — copy this template and uncomment to register your command
+    # dispatcher.register_command(
+    #     "!example", cmd_example, ...
+    # )
 
     # ── Register a passive listener ────────────────────────────────────────────
     # Listeners receive every message regardless of whether it's a command.

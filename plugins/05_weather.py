@@ -390,7 +390,7 @@ def setup(dispatcher, config, db):
             lines.append(f"{src} #{r['id']} {r['event_type'] or 'Alert'}{exp}")
             if r["headline"]:
                 lines.append(f"   {r['headline'][:100]}")
-        lines.append("Use !alert <id> for full text.")
+        lines.append("Use !wxalert show <id> for full text.")
         return "\n".join(lines)
 
     # ── Auto-broadcast new alerts ─────────────────────────────────────────────
@@ -488,7 +488,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!wxrefresh", cmd_wxrefresh,
-        help_text="(Admin) Force immediate NWS data refresh",
+        help_text="Force immediate NWS data refresh",
         scope="direct", priv_floor=15, category="weather", plugin_name="weather",
     )
 
@@ -527,7 +527,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_command(
         "!setloc", cmd_setloc,
-        help_text="Save your home ZIP for personalised !wx and !alerts",
+        help_text="Save your home ZIP for personalised !wx and !wxalert",
         usage_text=(
             "!setloc <zip>   — set your home ZIP code\n"
             "!setloc         — show your current home ZIP\n"

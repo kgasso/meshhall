@@ -113,9 +113,9 @@ def setup(dispatcher, config, db):
             )
         return "\n".join(lines)
 
-    dispatcher.register_command(
+    dispatcher.register_admin_command(
         "!users", cmd_users,
-        help_text="List known users",
+        help_text="List known users with privilege levels",
         usage_text="!users [filter]",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",
@@ -164,7 +164,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!setpriv", cmd_setpriv,
-        help_text="(Admin) Set a user's privilege level",
+        help_text="Set a user's privilege level",
         usage_text="!setpriv <id or name> <0-15>",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",
@@ -195,7 +195,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!mute", cmd_mute,
-        help_text="(Admin) Mute a user (sets privilege 0)",
+        help_text="Mute a user (sets privilege 0)",
         usage_text="!mute <id or name>",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",
@@ -222,7 +222,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!unmute", cmd_unmute,
-        help_text="(Admin) Restore a user from mute",
+        help_text="Restore a user from mute",
         usage_text="!unmute <id or name>",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",

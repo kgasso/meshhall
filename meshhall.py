@@ -163,7 +163,7 @@ def _register_version_cmd(dispatcher: Dispatcher, loader: PluginLoader):
 
     dispatcher.register_command(
         "!version", cmd_version,
-        help_text="Show core and plugin version info (admin only)",
+        help_text="Show core and plugin version info",
         scope="direct",
         priv_floor=PRIV_ADMIN,
         is_admin=False,

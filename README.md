@@ -37,7 +37,7 @@ or `!help <command>` for detailed usage on any specific command.
 | `!about` | DM | About this bot and its operator contact |
 | `!whoami` | DM | Your station name, node ID, and privilege level |
 | `!help [cmd]` | channel/DM | Command list (filtered by privilege); `!help <cmd>` for details |
-| `!version` | DM | Core version and loaded plugin versions (admin) |
+| `!version` | DM | Core version and loaded plugin versions |
 | `!rehash` | DM | Reload all config files without restarting (admin) |
 | `!restart` | DM | Restart the bot process — requires `!restart confirm` (admin) |
 | `!shutdown` | DM | Shut down the bot — requires `!shutdown confirm` (admin) |
@@ -52,63 +52,192 @@ or `!help <command>` for detailed usage on any specific command.
 
 ---
 
+### Nets (`02_nets`)
+
+Named check-in nets with recurring or ad-hoc sessions. Net control or admin
+required for session and membership management. `!net` without a subcommand
+prints the full subcommand list.
+
+| Command | Scope | Description |
+|---|---|---|
+| `!net list` | DM/channel | List all active nets |
+| `!net info <slug>` | DM/channel | Net details, schedule, and current status |
+| `!net checkin [slug]` | DM/channel | Check in to a net (shortcut: `!checkin`) |
+| `!net regrets <slug>` | DM | Register planned absence (shortcut: `!regrets`) |
+| `!net roll [slug] [YYYY-MM-DD]` | DM/channel | Roll call for current or past session (shortcut: `!roll`) |
+| `!net start <slug>` | DM/channel | Manually open a session (net control/admin); alias: `!open` |
+| `!net stop <slug>` | DM/channel | Manually close a session (net control/admin); alias: `!close` |
+| `!net schedule <slug> <schedule> [tz]` | DM | Set or clear recurrence (net control/admin) |
+| `!net create <slug> <name> [opts]` | DM | Create a new net (net control/admin) |
+| `!net delete <slug>` | DM | Deactivate a net (net control/admin) |
+| `!net add <net> <user>` | DM | Add a member (net control/admin) |
+| `!net remove <net> <user>` | DM | Remove a member (net control/admin) |
+| `!net promote <net> <user>` | DM | Promote a guest to full member |
+| `!net grant <net> <user>` | DM | Grant net control role (admin) |
+| `!net revoke <net> <user>` | DM | Revoke net control role (admin) |
+
+**`!net create` options:** `schedule "..."` `timezone TZ` `duration MIN` `channel CH` `guests yes|no` `description "..."`
+
+**Schedule examples:** `weekly tuesday 19:00`, `monthly 3rd tuesday 19:00`, `daily 08:00`, `none` (ad-hoc)
+
+**Shortcuts** (hidden from `!help` index):
+
+| Shortcut | Equivalent |
+|---|---|
+| `!checkin [slug]` | `!net checkin [slug]` |
+| `!regrets <slug>` | `!net regrets <slug>` |
+| `!roll [slug] [date]` | `!net roll [slug] [date]` |
+| `!open <slug>` | `!net start <slug>` |
+| `!close <slug>` | `!net stop <slug>` |
 
 ---
 
 ### Bulletins (`03_bulletin`)
 
-Requires privilege 2 (known member) to post or delete.
+Requires privilege 2 (known member) to post. `!bulletin` without a subcommand
+prints the full subcommand list.
 
 | Command | Scope | Description |
 |---|---|---|
-| `!bulletins [n]` | DM | List recent bulletins |
-| `!bulletin <id>` | DM | Read a bulletin in full |
-| `!post <message>` | DM | Post a new bulletin |
-| `!delbul <id>` | DM | Delete a bulletin (own bulletins, or any if admin) |
+| `!bulletin list [n]` | DM | List last N bulletins (default 5, max 20) |
+| `!bulletin show <id>` | DM | Read a bulletin in full |
+| `!bulletin post [msg]` | DM | Post inline, or publish pending draft if no text given |
+| `!bulletin draft <text>` | DM | Start or append to a pending draft |
+| `!bulletin draft clear` | DM | Discard pending draft |
+| `!bulletin delete <id>` | DM | Delete a bulletin (own or any if admin) |
+
+**Shortcuts** (hidden from `!help` index):
+
+| Shortcut | Equivalent |
+|---|---|
+| `!post <msg>` | `!bulletin post <msg>` |
+| `!bulletins [n]` | `!bulletin list [n]` |
 
 ---
 
 ### Frequencies (`04_frequencies`)
 
+Frequency directory. `!freq` without a subcommand prints the full subcommand list.
+
 | Command | Scope | Description |
 |---|---|---|
-| `!freqs [category]` | DM | Browse the frequency directory |
-| `!freq <n>` | DM | Look up a frequency by number |
-| `!addfreq NAME FREQ MODE CAT [TONE] [notes]` | DM | Add a frequency entry (admin) |
-| `!delfreq <n>` | DM | Remove a frequency entry (admin) |
+| `!freq list [category]` | DM/channel | Browse the frequency directory |
+| `!freq show <id>` | DM/channel | Look up a frequency by ID |
+| `!freq add <name> <freq> <mode> <cat> [tone] [notes]` | DM | Add a frequency entry (admin) |
+| `!freq delete <id>` | DM | Remove a frequency entry (admin) |
+
+**Shortcuts** (hidden from `!help` index):
+
+| Shortcut | Equivalent |
+|---|---|
+| `!freqs [category]` | `!freq list [category]` |
 
 ---
 
 ### Weather (`05_weather`)
 
-NWS forecast and alert data. All weather commands are DM-only. Requires internet
-access for live fetches; falls back to cached data with a timestamp note when
-NWS is unreachable.
+NWS forecast and alert data. Requires internet access for live fetches; falls
+back to cached data with a staleness note when NWS is unreachable.
 
-Users can save a home ZIP with `!setloc` — bare `!wx` and `!alerts` will then
+Users can save a home ZIP with `!setloc` — bare `!wx` and `!wxalert` will then
 use their personal location instead of the bot's configured area.
 
-| Command | Description |
+| Command | Scope | Description |
+|---|---|---|
+| `!wx` | DM/channel | Forecast for your `!setloc` ZIP, or the bot's configured area |
+| `!wx <zip>` | DM/channel | NWS forecast for any US ZIP code |
+| `!wx [periods]` | DM/channel | 1–8 forecast periods for home ZIP (default 2) |
+| `!wx <zip> [periods]` | DM/channel | ZIP + period count |
+| `!setloc <zip>` | DM | Save your home ZIP for personalised `!wx` and `!wxalert` |
+| `!setloc` | DM | Show your current home ZIP |
+| `!setloc clear` | DM | Remove your saved home ZIP |
+| `!wxalert` | DM/channel | Active NWS/EAS alerts for your `!setloc` ZIP (or home zone) |
+| `!wxalert list [zip]` | DM/channel | Active alerts for area or any US ZIP code |
+| `!wxalert show <id>` | DM | Full text of a stored alert by ID |
+| `!wxrefresh` | DM | Force an immediate NWS data refresh (admin) |
+
+**Shortcuts** (hidden from `!help` index):
+
+| Shortcut | Equivalent |
 |---|---|
-| `!wx` | Forecast for your `!setloc` ZIP, or the bot's configured area if not set |
-| `!wx <zip>` | NWS forecast for any US ZIP code |
-| `!wx [periods]` | 1–8 forecast periods for the local area (default 2) |
-| `!setloc <zip>` | Save your home ZIP for personalised `!wx` and `!alerts` |
-| `!setloc` | Show your current home ZIP |
-| `!setloc clear` | Remove your saved home ZIP |
-| `!alerts` | Active NWS/EAS alerts for your `!setloc` ZIP, or the home zone |
-| `!alerts <zip>` | Active NWS alerts for any US ZIP code (live fetch) |
-| `!alert <id>` | Read the full text of a stored alert by ID |
-| `!wxrefresh` | Force an immediate NWS data refresh (admin) |
+| `!alerts [zip]` | `!wxalert list [zip]` |
 
 ZIP lookup requires `data/zip_code_database.csv` — see
 [weather.yaml](config/plugins/weather.yaml) for source and column mapping.
+
+> **Note:** `alerts.weather.gov` was decommissioned on December 2, 2025.
+> MeshHall uses `api.weather.gov` which is the current NWS API endpoint.
+
+---
+
+### Replay (`06_replay`)
+
+Message history. `!replay` without a subcommand defaults to list.
+
+| Command | Scope | Description |
+|---|---|---|
+| `!replay [n \| Xh \| Xd]` | channel | Replay recent messages — last N, last X hours, or last X days |
+| `!replay search <term>` | channel | Search message history by keyword |
+
+**Shortcuts** (hidden from `!help` index):
+
+| Shortcut | Equivalent |
+|---|---|
+| `!search <term>` | `!replay search <term>` |
+
+---
+
+### Users (`07_users`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!whoami` | DM | Your station name, node ID, and privilege level (built-in) |
+| `!whois <name\|ID>` | DM | Look up a user by display name or node ID |
+| `!users [filter]` | DM | List known users with privilege levels (admin) |
+| `!setpriv <id\|name> <0-15>` | DM | Set a user's privilege level (admin) |
+| `!mute <id\|name>` | DM | Mute a user — sets privilege 0; cannot mute admins (admin) |
+| `!unmute <id\|name>` | DM | Restore a muted user to default privilege (admin) |
+
+**Privilege levels:**
+
+| Level | Label | Description |
+|---|---|---|
+| 0 | muted | All messages silently dropped |
+| 1 | default | Standard access, auto-assigned on first contact |
+| 2–14 | configurable | Per-command floors set in plugin configs |
+| 15 | admin | Full access |
+
+Admins cannot mute or change the privilege of other admins directly. Use
+`!setpriv <user> <n>` to reduce an admin below 15 first, then mute if needed.
+
+---
+
+### Channels (`08_channels`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!channel list` | DM | List channel slots enumerated from the radio |
+| `!channel set <idx> on\|off` | DM | Enable or disable bot responses on a slot (admin) |
+| `!channel sync` | DM | Re-enumerate channels from the radio (admin) |
+
+---
+
+### MOTD (`09_motd`)
+
+| Command | Scope | Description |
+|---|---|---|
+| `!motd` | DM | Show the current message of the day |
+| `!setmotd <text>` | DM | Set the message of the day (admin) |
+| `!clearmotd` | DM | Clear the message of the day (admin) |
+
+The MOTD is delivered automatically on a user's first contact (or when the intro
+window elapses), if one is set.
 
 ---
 
 ### Statistics (`10_stats`)
 
-Admin-only, DM only. All sections available individually or as a combined summary.
+Admin-only, DM only.
 
 | Command | Description |
 |---|---|
@@ -123,61 +252,19 @@ Admin-only, DM only. All sections available individually or as a combined summar
 
 ---
 
-| Command | Description |
-|---|---|
-| `!motd` | Show the current message of the day |
-| `!setmotd <text>` | Set the message of the day (admin) |
-| `!clearmotd` | Clear the message of the day (admin) |
-
-The MOTD is also delivered automatically after the welcome message on a user's
-first contact (or when the intro window elapses), if one is set.
-
----
-
-### Replay (`06_replay`)
-
-| Command | Scope | Description |
-|---|---|---|
-| `!replay [n \| Xh \| Xd]` | channel | Replay recent messages — last N messages, last X hours, or last X days |
-| `!search <term>` | channel | Search message history by keyword |
-
----
-
-### Users (`07_users`)
-
-| Command | Scope | Description |
-|---|---|---|
-| `!whois <name\|ID>` | DM | Look up a user by display name or node ID |
-| `!users [filter]` | DM | List known users, optionally filtered |
-| `!setpriv <id\|name> <0-15>` | DM | Set a user's privilege level (admin) |
-| `!mute <id\|name>` | DM | Mute a user — sets privilege 0 (admin) |
-| `!unmute <id\|name>` | DM | Restore a muted user to default privilege (admin) |
-
----
-
-### Channels (`08_channels`)
-
-| Command | Scope | Description |
-|---|---|---|
-| `!channels` | DM | List channel slots enumerated from the radio |
-| `!channel <idx> on\|off` | DM | Enable or disable bot responses on a channel slot (admin) |
-| `!channel sync` | DM | Re-enumerate channels from the radio (admin) |
-
----
-
 ## Requirements
 
 ### Hardware
 
-- Raspberry Pi 4 (2GB+) with SSD recommended (if frequent database writes)
+- Raspberry Pi 3B+ or newer (3B+ tested; Pi 4 with SSD recommended for heavy use)
 - RAK4631 WisBlock Core on RAK19007 Base Board
 - 915 MHz LoRa antenna
-- RECOMMENDED: DS3231 based RTC (accurate timekeeping without internet)
-- RECOMMENDED: UPS / UPS HAT + LiPo/18650 cells
+- RECOMMENDED: DS3231 RTC module (accurate timekeeping without internet)
+- RECOMMENDED: UPS HAT + LiPo/18650 cells
 
 ### Software
-- Python 3
-- Various Python libraries (install.sh will resolve, see requirements.txt)
+- Python 3.11+
+- Python libraries — resolved by `install.sh` (see `requirements.txt`)
 
 ---
 
@@ -186,10 +273,7 @@ first contact (or when the intro window elapses), if one is set.
 ### 1. Clone / copy files to the Pi
 
 ```bash
-# If you don't have Git installed, use sudo to install it locally
 sudo apt-get install git
-
-# As your regular user (e.g. 'pi')
 git clone https://github.com/kgasso/meshhall.git ~/meshhall-src
 cd ~/meshhall-src
 ```
@@ -197,7 +281,7 @@ cd ~/meshhall-src
 ### 2. Run the installer (as root)
 
 The installer creates a `meshhall` service account, installs to `/opt/meshhall`,
-creates a Python venv, installs dependencies, and registers systemd services.
+creates a Python venv, installs dependencies, and registers a systemd service.
 
 ```bash
 sudo bash deploy/install.sh
@@ -214,34 +298,24 @@ sudo nano /opt/meshhall/config/config.yaml
 
 **Plugin configs** — each plugin has its own file in `config/plugins/`:
 ```bash
-sudo nano /opt/meshhall/config/plugins/weather.yaml      # zone, lat/lon, alert channel
+sudo nano /opt/meshhall/config/plugins/weather.yaml      # home ZIP, NWS zone
 sudo nano /opt/meshhall/config/plugins/frequencies.yaml  # seed frequency data
 sudo nano /opt/meshhall/config/plugins/bulletin.yaml     # optional tuning
 sudo nano /opt/meshhall/config/plugins/replay.yaml       # optional tuning
+sudo nano /opt/meshhall/config/plugins/nets.yaml         # net scope/priv settings
 ```
-
-Plugin config files are **only read by the plugin that uses them**. Having a config
-file present for a plugin that isn't loaded causes no errors.
 
 **Set your NWS zone code** for weather alerts:
 
 ```bash
-# Replace with your actual coordinates
 curl "https://api.weather.gov/points/42.4390,-123.3284" | python3 -m json.tool | grep forecastZone
-# Look for the zone code at the end of the forecastZone URL, e.g. "ORZ011"
+# Look for the zone code at the end of the URL, e.g. "ORZ011"
 ```
 
-Put that code in `config/plugins/weather.yaml` under `zone:`.
-
-> **Note:** `alerts.weather.gov` was decommissioned on December 2, 2025.
-> MeshHall uses `api.weather.gov` which is the current NWS API endpoint.
-
-### 5. Start the service
+### 4. Start the service
 
 ```bash
 sudo systemctl start meshhall
-
-# Watch logs
 sudo journalctl -u meshhall -f
 ```
 
@@ -251,86 +325,49 @@ sudo journalctl -u meshhall -f
 
 ### Serial (default — recommended for RAK4631)
 
-The RAK4631 is nRF52840-based and communicates over USB serial. This is the
-simplest and most reliable connection method.
-
 ```yaml
 # config/config.yaml
 connection:
   type: serial
-  serial_port: /dev/ttyACM0   # verify with: ls /dev/ttyACM*
+  serial_port: /dev/ttyACM0
   baud_rate: 115200
 ```
 
-The `meshhall` service account is added to the `dialout` group by the installer,
-which grants access to `/dev/ttyACM*` without needing root.
+### TCP (ESP32-based devices only — untested)
 
-### TCP (ESP32-based devices only — untested, reserved for future implementation)
-
-> **Note:** TCP connectivity has not been tested and likely does not work in
-> the current release. It is reserved for future implementation once compatible
-> hardware is available for testing. Use serial for all current deployments!
-
-TCP connectivity is available on ESP32-based MeshCore companion builds (e.g.
-Heltec V3, Station G2 — **not** the RAK4631, which is nRF52840).
-
-The firmware must be compiled with `WIFI_SSID` and `WIFI_PWD` defined. The node
-creates a TCP server on port 5000. Only **one TCP client can connect at a time** —
-the bot holds that connection permanently, so you cannot simultaneously use the
-companion app over WiFi while the bot is running.
+> TCP connectivity has not been tested. Use serial for all current deployments.
 
 ```yaml
-# config/config.yaml
 connection:
   type: tcp
-  tcp_host: 192.168.1.100   # LAN IP of the ESP32 node
-  tcp_port: 5000             # default MeshCore TCP port
+  tcp_host: 192.168.1.100
+  tcp_port: 5000
 ```
 
 ---
 
 ## Service Account Details
 
-The installer creates a `meshhall` system account with:
-- No login shell (`/usr/sbin/nologin`)
-- No home directory in `/home`
-- Home set to `/opt/meshhall`
-- Member of `dialout` (serial/USB access)
-
-To edit config files as your regular user without sudo, add yourself to the
-`meshhall` group:
+The installer creates a `meshhall` system account with no login shell, home at
+`/opt/meshhall`, and membership in the `dialout` group for serial access.
 
 ```bash
-sudo usermod -aG meshhall $USER
-newgrp meshhall   # or log out and back in
+sudo usermod -aG meshhall $USER   # edit config files without sudo
+newgrp meshhall
 ```
-
-Config files in `/opt/meshhall/config/` are group-writable by the `meshhall` group.
 
 ---
 
 ## Python Virtual Environment
 
-The venv lives at `/opt/meshhall/venv/`. To interact with it manually:
-
 ```bash
-# Activate
 source /opt/meshhall/venv/bin/activate
-
-# Install a new package (then add it to requirements.txt)
-pip install some-package
-
-# Run the bot manually (stop the service first)
-sudo systemctl stop meshhall
-cd /opt/meshhall
-/opt/meshhall/venv/bin/python meshhall.py
-
-# Deactivate
+pip install some-package              # then add to requirements.txt
 deactivate
-```
 
-After updating `requirements.txt`, reinstall into the venv:
-```bash
+sudo systemctl stop meshhall
+cd /opt/meshhall && /opt/meshhall/venv/bin/python meshhall.py   # run manually
+
 sudo /opt/meshhall/venv/bin/pip install -r /opt/meshhall/requirements.txt
 sudo systemctl restart meshhall
 ```
@@ -342,13 +379,11 @@ sudo systemctl restart meshhall
 1. Copy `plugins/_template.py` to `plugins/XX_myplugin.py`
 2. Implement `setup(dispatcher, config, db)`
 3. Load your plugin config with `cfg = config.plugin("myplugin")`
-   (reads `config/plugins/myplugin.yaml` if it exists — safe if absent)
 4. Create `config/plugins/myplugin.yaml` with your settings
-5. Restart the bot: `sudo systemctl restart meshhall`
+5. Restart: `sudo systemctl restart meshhall`
 
-Prefix the filename with a two-digit number to control load order.
+Prefix filename with a two-digit number to control load order.
 Prefix with underscore to disable without deleting: `_disabled_plugin.py`.
-
 
 ---
 
@@ -357,58 +392,55 @@ Prefix with underscore to disable without deleting: `_disabled_plugin.py`.
 ```
 meshhall.py                  Entry point and event loop
 core/
-  config.py                 Main config + per-plugin config loader
-  connection.py             MeshCore serial/TCP adapter + reply queue drain
-  database.py               Async SQLite (aiosqlite) + plugin schema registry
-  dispatcher.py             Command router, event bus, message chunker
-  plugin_loader.py          Auto-discovers plugins/*.py
-  ratelimit.py              Token bucket rate limiter for channel commands
+  config.py                  Main config + per-plugin config loader
+  connection.py              MeshCore serial/TCP adapter + reply queue drain
+  database.py                Async SQLite (aiosqlite) + plugin schema registry
+  dispatcher.py              Command router, event bus, message chunker
+  plugin_loader.py           Auto-discovers plugins/*.py
+  ratelimit.py               Token bucket rate limiter for channel commands
 plugins/
-  01_time.py                !time
-  02_nets.py                !checkin !regrets !roll !nets !netinfo !mknet !rmnet !addmember !delmember !promote !ncgrant !ncrevoke
-  03_bulletin.py            !post !bulletins !bulletin !delbul
-  04_frequencies.py         !freqs !freq !addfreq !delfreq
-  05_weather.py             !wx !alerts !alert
-  06_replay.py              !replay !search
-  07_users.py               !whois !users !setpriv !mute !unmute
-  08_channels.py            !channels !channel
-  09_motd.py                !motd !setmotd !clearmotd
-  10_stats.py               !stats
-  _template.py              Copy this to create new plugins
+  01_time.py                 !time
+  02_nets.py                 !net · subcommands: list info checkin regrets roll start stop schedule create delete add remove promote grant revoke
+  03_bulletin.py             !bulletin · subcommands: list show post draft delete
+  04_frequencies.py          !freq · subcommands: list show add delete
+  05_weather.py              !wx  !wxalert  !setloc
+  06_replay.py               !replay · subcommands: list search
+  07_users.py                !whois  !users  !setpriv  !mute  !unmute
+  08_channels.py             !channel · subcommands: list set sync
+  09_motd.py                 !motd  !setmotd  !clearmotd
+  10_stats.py                !stats
+  _template.py               Copy this to create new plugins
 config/
-  config.yaml               Main settings (connection, bot identity, logging)
+  config.yaml                Main settings (connection, bot identity, timezone, logging)
   plugins/
-    bulletin.yaml           Bulletin plugin tuning
-    frequencies.yaml        Frequency plugin tuning and seed data
-    replay.yaml             Replay plugin tuning
-    time.yaml               Time plugin tuning
-    weather.yaml            Weather plugin settings (zone, lat/lon, etc.)
+    bulletin.yaml            Bulletin plugin tuning
+    frequencies.yaml         Frequency plugin tuning and seed data
+    nets.yaml                Nets plugin scope/privilege settings
+    replay.yaml              Replay plugin tuning
+    time.yaml                Time plugin tuning
+    weather.yaml             Weather plugin settings (zone, home ZIP, etc.)
 deploy/
-  install.sh                Full installer (service account, venv, systemd)
+  install.sh                 Full installer (service account, venv, systemd)
   meshhall.service           systemd unit
-data/                       Created at runtime (owned by meshhall user)
-  meshhall.db               SQLite database (WAL mode)
-  meshhall.log              Log file
-  zip_code_database.csv     ZIP centroid data for !wx <zip> (operator-provided)
+data/                        Created at runtime (owned by meshhall user)
+  meshhall.db                SQLite database (WAL mode)
+  meshhall.log               Log file
+  zip_code_database.csv      ZIP centroid data for !wx / !wxalert (operator-provided)
 ```
 
-> **NOAA SAME/EAS offline alerts** (RTL-SDR decoder) has been moved to a
-> separate repository: [meshhall-same](https://github.com/kgasso/meshhall-same). The standalone SDR decoder feeds
-> offline weather alerts into MeshHall's database with zero internet dependency
-> — highly recommended if you have an RTL-SDR dongle.
+> **NOAA SAME/EAS offline alerts** — the RTL-SDR decoder has been moved to a
+> separate repository: [meshhall-same](https://github.com/kgasso/meshhall-same).
+> It feeds offline weather alerts into MeshHall's database with zero internet
+> dependency — highly recommended if you have an RTL-SDR dongle.
 
 ---
 
 ## Grid-Down Notes
 
-If you're architecting this to work in a grid-down scenario, there are several
-recommendations to help keep services up and functional:
-
 - Most commands work from cached/stored SQLite data — no internet required
-- Weather API polling is internet-dependant (`!wx`, `!alerts`)
-- Leveraging meshhall-same and an RTL-SDR will get you weather alerts without
-  internet access if an NWS station is available
-- DS3231 based RTC on a pi can keep accurate time (critical for timestamps)
-- UPS / UPS HAT + LiPo/18650 cells can keep the Pi powered and bot functional
-- WAL-mode SQLite should be safe for concurrent and durable access
-- Usage of SSD strongly preferred over SD card for frequent database writes
+- `!wx` and `!wxalert` fall back to cached data when NWS is unreachable
+- [meshhall-same](https://github.com/kgasso/meshhall-same) + RTL-SDR provides weather alerts without internet
+- DS3231 RTC keeps accurate timestamps when internet is unavailable
+- UPS HAT + LiPo/18650 cells keep the Pi powered during outages
+- WAL-mode SQLite is safe for concurrent and durable access
+- SSD strongly preferred over SD card for frequent database writes

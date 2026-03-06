@@ -411,7 +411,7 @@ class Dispatcher:
 
         self.register_command(
             "!restart", cmd_restart,
-            help_text="(Admin) Restart the bot process — requires confirmation",
+            help_text="Restart the bot process — requires confirmation",
             usage_text="!restart  |  !restart confirm",
             scope="direct",
             priv_floor=PRIV_ADMIN,
@@ -421,7 +421,7 @@ class Dispatcher:
 
         self.register_command(
             "!shutdown", cmd_shutdown,
-            help_text="(Admin) Shut down the bot — requires confirmation",
+            help_text="Shut down the bot — requires confirmation",
             usage_text="!shutdown  |  !shutdown confirm",
             scope="direct",
             priv_floor=PRIV_ADMIN,
@@ -836,10 +836,11 @@ class Dispatcher:
         Admins get a note directing them to !help admin for their commands.
         Disabled commands are hidden regardless of privilege.
         """
-        lines = [f"Use {command_char}help <command> for details\n"]
+        lines = [f"Use {command_char}help <command> for details"]
 
         if privilege >= PRIV_ADMIN:
-            lines.append(f"Use {command_char}help admin for admin commands.\n")
+            lines.append(f"Use {command_char}help admin for admin commands.")
+        lines.append("")
 
         for stored_cmd, entry in sorted(self._commands.items()):
             if not entry.help_text:

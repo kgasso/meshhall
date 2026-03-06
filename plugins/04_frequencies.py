@@ -1,3 +1,4 @@
+import re
 """
 Plugin: Frequency Directory
 Commands:
@@ -11,7 +12,7 @@ Subcommands:
   !freq delete <name>     — (Admin) Remove a frequency entry
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -31,6 +32,24 @@ CREATE TABLE IF NOT EXISTS frequencies (
     added_by    TEXT
 );
 """
+
+
+def _is_tone(s: str) -> bool:
+    """
+    Return True if the string looks like a squelch tone, not the start of notes.
+    Matches:
+      CTCSS  — numeric, e.g. 100.0  88.5  127.3
+      DPL/DCS — D + 3 digits + optional N or I, e.g. D023N  D803N  D503I
+      Silence — 0 / none / off  (caller normalises to empty string)
+    """
+    return bool(re.match(r'^(\d+\.?\d*|D\d{3}[NI]?)$', s, re.IGNORECASE))
+
+
+def _normalise_tone(s: str) -> str:
+    """Return empty string for 'no tone' sentinels, otherwise return uppercased."""
+    if s.lower() in ("0", "none", "off"):
+        return ""
+    return s.upper()
 
 
 def setup(dispatcher, config, db):
@@ -112,8 +131,9 @@ def setup(dispatcher, config, db):
         name, freq, mode, category = (
             parts[0].upper(), parts[1], parts[2].upper(), parts[3].lower()
         )
-        tone  = parts[4] if len(parts) > 4 and not parts[4][0].isalpha() else ""
-        notes = " ".join(parts[5 if tone else 4:])
+        raw_tone = parts[4] if len(parts) > 4 and _is_tone(parts[4]) else ""
+        tone     = _normalise_tone(raw_tone) if raw_tone else ""
+        notes    = " ".join(parts[5 if raw_tone else 4:])
         await db.execute(
             "INSERT OR REPLACE INTO frequencies "
             "(name,freq,mode,tone,category,notes,added_by) VALUES (?,?,?,?,?,?,?)",

@@ -9,7 +9,7 @@ Subcommands:
   !replay search <term>       — Search message history by keyword
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -23,6 +23,17 @@ from core.database import PRIV_DEFAULT
 
 def _fmt_ts(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%Mz")
+
+
+async def _resolve_name(db, sender_id: str, sender_name) -> str:
+    """Return best available display name, falling back to DB lookup then ID."""
+    if sender_name:
+        return sender_name
+    user = await db.get_user(sender_id)
+    if user and user.get("display_name"):
+        name = user["display_name"]
+        return f"{name} ({sender_id})"
+    return sender_id
 
 
 def setup(dispatcher, config, db):
@@ -77,9 +88,8 @@ def setup(dispatcher, config, db):
             "---",
         ]
         for r in rows:
-            lines.append(
-                f"[{_fmt_ts(r['ts'])}] {r['sender_name'] or r['sender_id']}: {r['content']}"
-            )
+            name = await _resolve_name(db, r['sender_id'], r['sender_name'])
+            lines.append(f"[{_fmt_ts(r['ts'])}] {name}: {r['content']}")
         return "\n".join(lines)
 
     async def do_search(msg, args=""):
@@ -95,10 +105,8 @@ def setup(dispatcher, config, db):
             return f"No messages found containing '{term}'."
         lines = [f"Search '{term}': {len(rows)} result(s)"]
         for r in rows:
-            lines.append(
-                f"[{_fmt_ts(r['ts'])}] {r['sender_name'] or r['sender_id']}: "
-                f"{r['content'][:100]}"
-            )
+            name = await _resolve_name(db, r['sender_id'], r['sender_name'])
+            lines.append(f"[{_fmt_ts(r['ts'])}] {name}: {r['content'][:100]}")
         return "\n".join(lines)
 
     _SUBCOMMANDS = {

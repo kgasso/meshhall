@@ -123,7 +123,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!setmotd", cmd_setmotd,
-        help_text="(Admin) Set the message of the day",
+        help_text="Set the message of the day",
         usage_text="!setmotd <message text>",
         scope="direct", priv_floor=PRIV_ADMIN, category="motd", plugin_name="motd",
     )
@@ -138,6 +138,6 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!clearmotd", cmd_clearmotd,
-        help_text="(Admin) Clear the message of the day",
+        help_text="Clear the message of the day",
         scope="direct", priv_floor=PRIV_ADMIN, category="motd", plugin_name="motd",
     )

@@ -221,7 +221,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!stats", cmd_stats,
-        help_text="(Admin) Network and bot statistics",
+        help_text="Network and bot statistics",
         usage_text=(
             "!stats                — full summary\n"
             "!stats messages       — message volume and top senders\n"

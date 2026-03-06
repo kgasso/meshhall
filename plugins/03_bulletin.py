@@ -14,7 +14,7 @@ Subcommands:
   !bulletin delete <id>   — Delete a bulletin (own or any if admin)
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -23,6 +23,7 @@ __license__   = "GPLv3"
 
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from core.database import PRIV_DEFAULT, PRIV_ADMIN
 
 SCHEMA = """
@@ -47,6 +48,17 @@ def _fmt_ts(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%Mz")
 
 
+def _fmt_ts_dual(ts: int, local_tz_str: str) -> str:
+    """Return timestamp as 'MM-DD HH:MMz (HH:MM local)' using the bot timezone."""
+    utc_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%Mz")
+    try:
+        tz  = ZoneInfo(local_tz_str)
+        loc = datetime.fromtimestamp(ts, tz=tz).strftime("%H:%M %Z")
+        return f"{utc_str} ({loc})"
+    except (ZoneInfoNotFoundError, Exception):
+        return utc_str
+
+
 def _fmt_sender(row):
     """Return 'Name (id)' or just 'id' if no name stored."""
     name = row["sender_name"]
@@ -56,6 +68,9 @@ def _fmt_sender(row):
 
 def setup(dispatcher, config, db):
     db.register_schema(SCHEMA)
+
+    def _local_tz() -> str:
+        return config.get("bot.timezone", "UTC")
 
     # ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -91,7 +106,7 @@ def setup(dispatcher, config, db):
         if not row:
             return f"Bulletin #{bul_id} not found."
         return (
-            f"Bulletin #{row['id']} [{_fmt_ts(row['ts'])}]\n"
+            f"Bulletin #{row['id']} [{_fmt_ts_dual(row['ts'], _local_tz())}]\n"
             f"From: {_fmt_sender(row)}\n"
             f"{row['content']}"
         )
