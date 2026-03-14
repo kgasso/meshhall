@@ -1,29 +1,29 @@
 """
 Plugin: User Registry & Privilege Management
 Commands:
-  !whoami              — (built-in dispatcher command, not registered here)
-  !whois <name|id>     — Look up a user's registry record
-  !users [filter]      — List known users with privilege levels
-  !setpriv <id> <n>    — Set a user's privilege level (0-15)
-  !mute <id|name>      — Set privilege to 0 (shorthand for !setpriv ... 0)
-  !unmute <id|name>    — Restore privilege to 1 (shorthand for !setpriv ... 1)
+  !whoami              -- (built-in dispatcher command, not registered here)
+  !whois <name|id>     -- Look up a user's registry record
+  !users [filter]      -- List known users with privilege levels
+  !setpriv <id> <n>    -- Set a user's privilege level (0-15)
+  !mute <id|name>      -- Set privilege to 0 (cannot mute admins)
+  !unmute <id|name>    -- Restore privilege to 1 (shorthand for !setpriv ... 1)
 
 Privilege levels:
-  0  = muted    — all messages silently dropped
-  1  = default  — standard read-only access (auto-assigned on first contact)
+  0  = muted    -- all messages silently dropped
+  1  = default  -- standard read-only access (auto-assigned on first contact)
   2-14           = configurable tiers, set per-command in plugin configs
-  15 = admin    — full access
+  15 = admin    -- full access
 
 Config: config/plugins/users.yaml
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
 __copyright__ = "Copyright 2026, Kameron Gasso"
 __license__   = "GPLv3"
-# Plugin version — update here when making changes to this plugin.
+# Plugin version -- update here when making changes to this plugin.
 # PluginLoader reads __version__ to populate !version output.
 
 import time
@@ -109,13 +109,13 @@ def setup(dispatcher, config, db):
             name = u["display_name"] or "(unnamed)"
             lines.append(
                 f"  {name} ({u['pubkey_prefix']}) "
-                f"L{u['privilege']} — {_fmt_age(u['last_seen_ts'])}"
+                f"L{u['privilege']} -- {_fmt_age(u['last_seen_ts'])}"
             )
         return "\n".join(lines)
 
-    dispatcher.register_command(
+    dispatcher.register_admin_command(
         "!users", cmd_users,
-        help_text="List known users",
+        help_text="List known users with privilege levels",
         usage_text="!users [filter]",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",
@@ -137,27 +137,34 @@ def setup(dispatcher, config, db):
         if not user:
             return f"No user found matching '{query}'."
 
-        # Prevent self-demotion from admin — safety rail
+        # Prevent self-demotion from admin
         if user["pubkey_prefix"] == msg.sender_id and new_priv < PRIV_ADMIN:
             return "You cannot reduce your own admin privilege."
 
+        # Prevent changing another admin's privilege -- demote them first
         old_priv = user["privilege"]
+        if old_priv >= PRIV_ADMIN and user["pubkey_prefix"] != msg.sender_id:
+            return (
+                f"{user['display_name'] or user['pubkey_prefix']} is an admin. "
+                "Admins cannot have their privilege changed by another admin."
+            )
+
         await db.set_privilege(user["pubkey_prefix"], new_priv)
 
         name = user["display_name"] or user["pubkey_prefix"]
         dispatcher.log_admin_attempt(
             "!setpriv", msg, granted=True,
-            reason=f"{name} {old_priv} → {new_priv} ({_priv_label(new_priv)})"
+            reason=f"{name} {old_priv} -> {new_priv} ({_priv_label(new_priv)})"
         )
         return (
             f"Privilege updated: {name} ({user['pubkey_prefix']})\n"
-            f"{old_priv} ({_priv_label(old_priv)}) → "
+            f"{old_priv} ({_priv_label(old_priv)}) -> "
             f"{new_priv} ({_priv_label(new_priv)})"
         )
 
     dispatcher.register_admin_command(
         "!setpriv", cmd_setpriv,
-        help_text="(Admin) Set a user's privilege level",
+        help_text="Set a user's privilege level",
         usage_text="!setpriv <id or name> <0-15>",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",
@@ -173,6 +180,12 @@ def setup(dispatcher, config, db):
         if user["pubkey_prefix"] == msg.sender_id:
             return "You cannot mute yourself."
 
+        if user["privilege"] >= PRIV_ADMIN:
+            return (
+                f"{user['display_name'] or user['pubkey_prefix']} is an admin and cannot be muted. "
+                "Use !setpriv to reduce their privilege first."
+            )
+
         name = user["display_name"] or user["pubkey_prefix"]
         await db.set_privilege(user["pubkey_prefix"], PRIV_MUTED)
         dispatcher.log_admin_attempt(
@@ -182,7 +195,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!mute", cmd_mute,
-        help_text="(Admin) Mute a user (sets privilege 0)",
+        help_text="Mute a user (sets privilege 0)",
         usage_text="!mute <id or name>",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",
@@ -209,7 +222,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!unmute", cmd_unmute,
-        help_text="(Admin) Restore a user from mute",
+        help_text="Restore a user from mute",
         usage_text="!unmute <id or name>",
         scope="direct",
         priv_floor=PRIV_ADMIN, category="users", plugin_name="users",

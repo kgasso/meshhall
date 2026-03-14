@@ -1,13 +1,13 @@
 # config/plugins/frequencies.yaml
 
-# ── Command privileges ────────────────────────────────────────────────────────
+# -- Command privileges --------------------------------------------------------
 privileges:
-  freqs:    1       # floor: 1 — anyone can browse the frequency directory
-  freq:     1       # floor: 1 — anyone can look up a frequency
-  addfreq:  15      # floor: 15 — admin only to add/update
-  delfreq:  15      # floor: 15 — admin only to remove
+  freqs:    1       # floor: 1 -- anyone can browse the frequency directory
+  freq:     1       # floor: 1 -- anyone can look up a frequency
+  addfreq:  15      # floor: 15 -- admin only to add/update
+  delfreq:  15      # floor: 15 -- admin only to remove
 
-# ── Seed data ─────────────────────────────────────────────────────────────────
+# -- Seed data -----------------------------------------------------------------
 # Loaded into the database on first run. Edit the DB directly for runtime changes.
 seed:
   - { name: "SIMPLEX",   freq: "146.520", mode: "FM",  category: "repeater", notes: "National calling freq" }
@@ -19,16 +19,16 @@ seed:
   - { name: "CB-9",      freq: "27.065",  mode: "AM",  category: "cb",       notes: "Emergency channel" }
   - { name: "CB-19",     freq: "27.185",  mode: "AM",  category: "cb",       notes: "Truckers highway" }
 
-# ── Command scope ─────────────────────────────────────────────────────────────
-# Valid values (widest → narrowest): channel, direct, disabled
-#   channel  — responds in DMs and channels
-#   direct   — DM only
-#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# -- Command scope -------------------------------------------------------------
+# Valid values (widest -> narrowest): channel, direct, disabled
+#   channel  -- responds in DMs and channels
+#   direct   -- DM only
+#   disabled -- silently dropped; hidden from !help (any command can be disabled)
 # "channel" commands can be tightened to "direct" or "disabled" here.
 # "direct" commands marked [configurable] can be widened to "channel" here.
-# "direct" commands marked [locked] cannot be widened — but can be disabled.
+# "direct" commands marked [locked] cannot be widened -- but can be disabled.
 scopes:
-  freqs:   direct   # default: direct [configurable — can widen to channel]
-  freq:    direct   # default: direct [configurable — can widen to channel]
-  addfreq: direct   # default: direct [locked — admin write operation, DM only]
-  delfreq: direct   # default: direct [locked — admin write operation, DM only]
+  freqs:   direct   # default: direct [configurable -- can widen to channel]
+  freq:    direct   # default: direct [configurable -- can widen to channel]
+  addfreq: direct   # default: direct [locked -- admin write operation, DM only]
+  delfreq: direct   # default: direct [locked -- admin write operation, DM only]

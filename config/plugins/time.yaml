@@ -4,20 +4,20 @@
 # IANA zone names: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 timezone: "America/Los_Angeles"
 
-# ── Command privileges ────────────────────────────────────────────────────────
+# -- Command privileges --------------------------------------------------------
 # Values may only be raised above the hardcoded floor, never lowered below it.
-# Changes take effect immediately after !rehash — no restart needed.
+# Changes take effect immediately after !rehash -- no restart needed.
 #
 privileges:
-  time: 1           # floor: 1 — everyone can check the time
+  time: 1           # floor: 1 -- everyone can check the time
 
-# ── Command scope ─────────────────────────────────────────────────────────────
-# Valid values (widest → narrowest): channel, direct, disabled
-#   channel  — responds in DMs and channels
-#   direct   — DM only
-#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# -- Command scope -------------------------------------------------------------
+# Valid values (widest -> narrowest): channel, direct, disabled
+#   channel  -- responds in DMs and channels
+#   direct   -- DM only
+#   disabled -- silently dropped; hidden from !help (any command can be disabled)
 # "channel" commands can be tightened to "direct" or "disabled" here.
 # "direct" commands marked [configurable] can be widened to "channel" here.
-# "direct" commands marked [locked] cannot be widened — but can be disabled.
+# "direct" commands marked [locked] cannot be widened -- but can be disabled.
 scopes:
-  time: channel     # default: channel [configurable — can restrict to direct]
+  time: channel     # default: channel [configurable -- can restrict to direct]

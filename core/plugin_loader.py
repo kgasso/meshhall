@@ -1,5 +1,5 @@
 """
-PluginLoader — discovers and initialises plugin modules.
+PluginLoader -- discovers and initialises plugin modules.
 
 Each plugin is a Python file in the plugins/ directory that exposes:
 
@@ -34,7 +34,7 @@ class PluginLoader:
         self.dispatcher = dispatcher
         self.config = config
         self.db = db
-        # name → (version_str, path)
+        # name -> (version_str, path)
         self._loaded: Dict[str, Tuple[str, str]] = {}
 
     def load_all(self, plugin_dir: str):

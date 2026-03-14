@@ -1,9 +1,9 @@
 """
-Configuration manager — loads YAML config with dot-path access and defaults.
+Configuration manager -- loads YAML config with dot-path access and defaults.
 
 Plugin configs live in config/plugins/<plugin_name>.yaml and are loaded
 on demand only when a plugin calls config.plugin("name"). A plugin config
-file that doesn't exist simply returns an empty dict — no errors, no side
+file that doesn't exist simply returns an empty dict -- no errors, no side
 effects from unloaded plugins having stale config files around.
 
 Hot reload:
@@ -98,7 +98,7 @@ class Config:
     def plugin(self, name: str) -> "PluginConfig":
         """
         Load and return config for a plugin by name.
-        Looks for config/plugins/<n>.yaml — returns empty config if not found.
+        Looks for config/plugins/<n>.yaml -- returns empty config if not found.
         Cache is cleared on reload() so changes are picked up on next access.
         """
         if name not in self._plugin_cache:
