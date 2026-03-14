@@ -1,9 +1,9 @@
 """
 Plugin: Message of the Day (MOTD)
 Commands:
-  !motd            — Show the current message of the day
-  !setmotd <text>  — Set the message of the day (admin)
-  !clearmotd       — Clear the message of the day (admin)
+  !motd            -- Show the current message of the day
+  !setmotd <text>  -- Set the message of the day (admin)
+  !clearmotd       -- Clear the message of the day (admin)
 
 The MOTD is delivered automatically after the welcome message on a user's first
 DM (or when the intro window elapses), if one is set. It is also available
@@ -46,7 +46,7 @@ def setup(dispatcher, config, db):
     def _cfg():
         return config.plugin("motd")
 
-    # ── DB helpers ────────────────────────────────────────────────────────────
+    # -- DB helpers ------------------------------------------------------------
 
     async def _get_motd() -> dict | None:
         """Return the current MOTD row, or None if not set."""
@@ -65,10 +65,10 @@ def setup(dispatcher, config, db):
         await db.execute("DELETE FROM motd WHERE id=1")
         await db.commit()
 
-    # ── MOTD delivery hook ────────────────────────────────────────────────────
+    # -- MOTD delivery hook ----------------------------------------------------
     # The dispatcher fires _maybe_send_welcome, then any post-welcome hooks.
     # We register a rehash callback that also exposes a callable for the
-    # dispatcher to invoke after welcome — achieved via a listener that checks
+    # dispatcher to invoke after welcome -- achieved via a listener that checks
     # whether this is a fresh welcome situation and appends the MOTD.
     #
     # Simpler approach: register a listener that piggybacks on the welcome flow
@@ -94,7 +94,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_listener(motd_delivery_listener)
 
-    # ── Commands ──────────────────────────────────────────────────────────────
+    # -- Commands --------------------------------------------------------------
 
     async def cmd_motd(msg):
         motd_row = await _get_motd()
@@ -115,7 +115,7 @@ def setup(dispatcher, config, db):
             return "Usage: !setmotd <message text>"
         max_len = _cfg().get("max_length", 200)
         if len(text) > max_len:
-            return f"MOTD too long — max {max_len} characters (yours: {len(text)})."
+            return f"MOTD too long -- max {max_len} characters (yours: {len(text)})."
         await _set_motd(text, msg.sender_id)
         dispatcher.log_admin_attempt("!setmotd", msg, granted=True,
                                      reason=f"set MOTD: {text[:60]}{'…' if len(text) > 60 else ''}")
@@ -123,7 +123,7 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!setmotd", cmd_setmotd,
-        help_text="(Admin) Set the message of the day",
+        help_text="Set the message of the day",
         usage_text="!setmotd <message text>",
         scope="direct", priv_floor=PRIV_ADMIN, category="motd", plugin_name="motd",
     )
@@ -138,6 +138,6 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!clearmotd", cmd_clearmotd,
-        help_text="(Admin) Clear the message of the day",
+        help_text="Clear the message of the day",
         scope="direct", priv_floor=PRIV_ADMIN, category="motd", plugin_name="motd",
     )

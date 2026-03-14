@@ -1,34 +1,34 @@
 """
-Dispatcher — the central event bus.
+Dispatcher -- the central event bus.
 
 Message flow:
-  raw packet → ConnectionManager → Dispatcher.handle() →
-      upsert user registry (skipped for sender_id="unknown") →
-      check mute → match command →
-      check scope → resolve privilege → check privilege → execute
+  raw packet -> ConnectionManager -> Dispatcher.handle() ->
+      upsert user registry (skipped for sender_id="unknown") ->
+      check mute -> match command ->
+      check scope -> resolve privilege -> check privilege -> execute
 
 Privilege levels (0-15):
-  0  = muted    — all messages silently dropped
-  1  = default  — auto-assigned on first contact
+  0  = muted    -- all messages silently dropped
+  1  = default  -- auto-assigned on first contact
   2-14           = configurable tiers
-  15 = admin    — full access
+  15 = admin    -- full access
 
 Privilege resolution (per command, at dispatch time):
   1. Plugin config:  config.plugin(plugin).get("privileges.<cmd>")
-  2. Hardcoded floor in register_command() — config can only raise, never lower
+  2. Hardcoded floor in register_command() -- config can only raise, never lower
   3. Clamped to [floor, 15]
   This means !rehash picks up privilege changes immediately.
 
 Command scope (default hardcoded per command, operator-configurable via plugin YAML):
-  "channel"  — DM or any channel the bot is in
-  "direct"   — DM only
-  "disabled" — silently dropped at dispatch; hidden from !help output
+  "channel"  -- DM or any channel the bot is in
+  "direct"   -- DM only
+  "disabled" -- silently dropped at dispatch; hidden from !help output
 
   Scope resolution (per command, at dispatch time):
     1. Plugin config: config.plugin(plugin_name).get("scopes.<cmd_key>")
     2. Hardcoded default in register_command()
-  Restriction rules (widest → narrowest):
-    - Any command can be disabled via config — no opt-in required.
+  Restriction rules (widest -> narrowest):
+    - Any command can be disabled via config -- no opt-in required.
     - "channel" can be tightened to "direct" or "disabled" via config.
     - "direct" can be tightened to "disabled" via config, or widened to
       "channel" only if allow_channel=True was passed at registration.
@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Awaitable, Dict, List, Optional, NamedTuple
 
 from core.database import PRIV_MUTED, PRIV_DEFAULT, PRIV_ADMIN
-from core.ratelimit import ChannelRateLimiter, RateLimitResult
+from core.ratelimit import ChannelRateLimiter, DmRateLimiter, RateLimitResult
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class Message:
     def get_command(self, command_char: str = "!") -> Optional[str]:
         """
         Return the command token if the message starts with command_char.
-        Tolerates a space between the command char and the command name —
+        Tolerates a space between the command char and the command name --
         e.g. "! ping" is treated the same as "!ping" for mobile autocorrect QoL.
         """
         parts = self.args
@@ -84,14 +84,14 @@ class Message:
         # Standard: "!ping"
         if first.startswith(command_char) and len(first) > len(command_char):
             return first.lower()
-        # Spaced: "!" followed by a word token — "! ping"
+        # Spaced: "!" followed by a word token -- "! ping"
         if first == command_char and len(parts) > 1 and parts[1].isalpha():
             return (command_char + parts[1]).lower()
         return None
 
     @property
     def command(self) -> Optional[str]:
-        """Convenience property using default '!' — use get_command() in dispatcher."""
+        """Convenience property using default '!' -- use get_command() in dispatcher."""
         return self.get_command("!")
 
     @property
@@ -126,13 +126,14 @@ class CommandEntry(NamedTuple):
     handler:       HandlerFn
     help_text:     str          # short one-line description for summary help
     scope:         str          # registered default: "direct" or "channel"
-    priv_floor:    int          # hardcoded minimum — config cannot go below this
+    priv_floor:    int          # hardcoded minimum -- config cannot go below this
     is_admin:      bool
     plugin_name:   str          # used to look up config.plugin(plugin_name)
     cmd_key:       str          # bare command name without "!" for config key lookup
-    category:      str          # help grouping — "core" always listed first, rest alphabetical
+    category:      str          # help grouping -- "core" always listed first, rest alphabetical
     usage_text:    str  = ""    # extended usage shown in !help <cmd>
     allow_channel: bool = False # if True, a "direct" default can be widened to "channel" via config
+    is_shortcut:   bool = False # if True, hidden from !help index; discoverable via !help <cmd>
 
 # Sentinel used when a plugin doesn't specify a category
 _CAT_CORE  = "core"
@@ -147,18 +148,20 @@ class Dispatcher:
         self.config = config
         self.db     = db
         self._commands: Dict[str, CommandEntry] = {}
+        self._aliases:  Dict[str, str] = {}   # alias_key -> canonical_key
         self._listeners: List[HandlerFn] = []
         self._rehash_callbacks: List = []
         self._reply_queue: asyncio.Queue = asyncio.Queue()
-        self._rate_limiter = ChannelRateLimiter(config)
+        self._rate_limiter    = ChannelRateLimiter(config)
+        self._dm_rate_limiter = DmRateLimiter(config)
         # Pending confirmation state for disruptive admin commands (!restart, !shutdown).
         # Keyed by sender_id. Entries expire after CONFIRM_TTL_SECONDS.
         # { sender_id: {"action": "restart"|"shutdown", "expires": float} }
         self._pending_confirm: Dict[str, dict] = {}
-        # Bot start time — used by !stats for uptime reporting.
+        # Bot start time -- used by !stats for uptime reporting.
         self.started_at: float = time.time()
-        # In-memory command usage counters — incremented on every successful
-        # dispatch. Reset on restart (intentional — reflects current session).
+        # In-memory command usage counters -- incremented on every successful
+        # dispatch. Reset on restart (intentional -- reflects current session).
         # { "!cmd": count }
         self._cmd_usage: Dict[str, int] = {}
         self._register_builtins()
@@ -174,12 +177,12 @@ class Dispatcher:
         if isinstance(val, str) and len(val) == 1 and not val.isalnum() and not val.isspace():
             return val
         logger.warning(
-            f"Invalid bot.command_char {val!r} — must be a single non-alphanumeric "
+            f"Invalid bot.command_char {val!r} -- must be a single non-alphanumeric "
             f"character. Using {DEFAULT_COMMAND_CHAR!r}."
         )
         return DEFAULT_COMMAND_CHAR
 
-    # ── Privilege resolution ──────────────────────────────────────────────────
+    # -- Privilege resolution --------------------------------------------------
 
     def resolve_privilege(self, entry: CommandEntry) -> int:
         """
@@ -210,7 +213,7 @@ class Dispatcher:
         except (TypeError, ValueError):
             logger.warning(
                 f"Invalid privilege value for {entry.plugin_name}."
-                f"privileges.{entry.cmd_key}: {cfg_val!r} — using floor {entry.priv_floor}"
+                f"privileges.{entry.cmd_key}: {cfg_val!r} -- using floor {entry.priv_floor}"
             )
             return entry.priv_floor
 
@@ -227,14 +230,14 @@ class Dispatcher:
              Accepted values: "channel", "direct", "disabled"
           2. Hardcoded default (entry.scope)
 
-        Scope hierarchy (widest → narrowest):
-          channel  — responds in DMs and any channel the bot is in
-          direct   — DM only
-          disabled — silently dropped regardless of source; hidden from !help
+        Scope hierarchy (widest -> narrowest):
+          channel  -- responds in DMs and any channel the bot is in
+          direct   -- DM only
+          disabled -- silently dropped regardless of source; hidden from !help
 
         Restriction rules:
           - Any command can be disabled via config regardless of its registered
-            default. No opt-in required — operators should always be able to
+            default. No opt-in required -- operators should always be able to
             turn off a command.
           - "channel" can be tightened to "direct" or "disabled" via config.
           - "direct" can be tightened to "disabled" via config, or widened to
@@ -254,24 +257,24 @@ class Dispatcher:
         if cfg_val not in ("direct", "channel", "disabled"):
             logger.warning(
                 f"Invalid scope value for {entry.plugin_name}."
-                f"scopes.{entry.cmd_key}: {cfg_val!r} — "
+                f"scopes.{entry.cmd_key}: {cfg_val!r} -- "
                 f"must be 'channel', 'direct', or 'disabled'. "
                 f"Using default {entry.scope!r}."
             )
             return entry.scope
 
-        # Disabling is always permitted — narrowest possible scope.
+        # Disabling is always permitted -- narrowest possible scope.
         if cfg_val == "disabled":
             return "disabled"
 
-        # Tightening (channel → direct) is always allowed.
+        # Tightening (channel -> direct) is always allowed.
         if cfg_val == "direct":
             return "direct"
 
-        # Widening (direct → channel) only if explicitly opted in.
+        # Widening (direct -> channel) only if explicitly opted in.
         if cfg_val == "channel" and entry.scope == "direct" and not entry.allow_channel:
             logger.warning(
-                f"{entry.plugin_name}.scopes.{entry.cmd_key}=channel ignored — "
+                f"{entry.plugin_name}.scopes.{entry.cmd_key}=channel ignored -- "
                 f"this command was not registered with allow_channel=True."
             )
             return "direct"
@@ -279,7 +282,7 @@ class Dispatcher:
         return cfg_val
 
 
-    # ── Built-in commands ─────────────────────────────────────────────────────
+    # -- Built-in commands -----------------------------------------------------
 
     def _register_builtins(self):
         db = self.db
@@ -301,7 +304,7 @@ class Dispatcher:
         async def cmd_whoami(msg):
             user = await db.get_user(msg.sender_id)
             if not user:
-                return "You're not in the registry yet — send any command to register."
+                return "You're not in the registry yet -- send any command to register."
             name  = user["display_name"] or msg.sender_id
             priv  = user["privilege"]
             label = _priv_label(priv)
@@ -351,7 +354,7 @@ class Dispatcher:
             category=_CAT_CORE,
         )
 
-        # ── !restart / !shutdown — disruptive admin commands ──────────────────
+        # -- !restart / !shutdown -- disruptive admin commands ------------------
         # Both require a two-step confirmation within CONFIRM_TTL_SECONDS.
         # The actual OS action is injected from meshhall.py via
         # dispatcher.set_system_action_callback() after the event loop starts,
@@ -379,7 +382,7 @@ class Dispatcher:
                         f"Confirmation window expired. "
                         f"Send {cc}{action} again to start over."
                     )
-                # Confirmed — clear pending, log, send final reply, then act.
+                # Confirmed -- clear pending, log, send final reply, then act.
                 del self._pending_confirm[msg.sender_id]
                 logger.warning(f"ADMIN: !{action} confirmed by {who}")
                 verb = "Restarting" if action == "restart" else "Shutting down"
@@ -389,12 +392,12 @@ class Dispatcher:
                 asyncio.create_task(self._drain_and_act(action))
                 return None  # reply already enqueued above
 
-            # First invocation — set pending and send warning
+            # First invocation -- set pending and send warning
             self._pending_confirm[msg.sender_id] = {
                 "action":  action,
                 "expires": time.time() + CONFIRM_TTL,
             }
-            logger.warning(f"ADMIN: !{action} requested by {who} — awaiting confirmation")
+            logger.warning(f"ADMIN: !{action} requested by {who} -- awaiting confirmation")
             return (
                 f"This is disruptive and may require server access to reconcile. "
                 f"To proceed, send {cc}{action} confirm\n"
@@ -409,7 +412,7 @@ class Dispatcher:
 
         self.register_command(
             "!restart", cmd_restart,
-            help_text="(Admin) Restart the bot process — requires confirmation",
+            help_text="Restart the bot process -- requires confirmation",
             usage_text="!restart  |  !restart confirm",
             scope="direct",
             priv_floor=PRIV_ADMIN,
@@ -419,7 +422,7 @@ class Dispatcher:
 
         self.register_command(
             "!shutdown", cmd_shutdown,
-            help_text="(Admin) Shut down the bot — requires confirmation",
+            help_text="Shut down the bot -- requires confirmation",
             usage_text="!shutdown  |  !shutdown confirm",
             scope="direct",
             priv_floor=PRIV_ADMIN,
@@ -444,15 +447,15 @@ class Dispatcher:
         try:
             await asyncio.wait_for(self._reply_queue.join(), timeout=10.0)
         except asyncio.TimeoutError:
-            logger.warning(f"Reply queue did not drain before {action} — proceeding anyway.")
+            logger.warning(f"Reply queue did not drain before {action} -- proceeding anyway.")
 
         cb = getattr(self, "_system_action_callback", None)
         if cb:
             await cb(action)
         else:
-            logger.error(f"No system action callback registered — cannot {action}.")
+            logger.error(f"No system action callback registered -- cannot {action}.")
 
-    # ── Plugin registration API ───────────────────────────────────────────────
+    # -- Plugin registration API -----------------------------------------------
 
     def register_command(self, command: str, handler: HandlerFn,
                          help_text:     str  = "",
@@ -463,6 +466,7 @@ class Dispatcher:
                          category:      str  = "",
                          usage_text:    str  = "",
                          allow_channel: bool = False,
+                         is_shortcut:   bool = False,
                          # Legacy compat
                          min_privilege: int  = None):
         # Legacy: allow_channel=True at registration time still forces scope
@@ -488,6 +492,7 @@ class Dispatcher:
             category=cat,
             usage_text=usage_text,
             allow_channel=allow_channel,
+            is_shortcut=is_shortcut,
         )
         logger.debug(
             f"Registered: {key} scope={scope} floor={priv_floor} "
@@ -516,15 +521,123 @@ class Dispatcher:
             min_privilege=min_privilege,
         )
 
+
+    def register_contact_count_provider(self, fn):
+        """
+        Register a callable that returns the current live radio contact count.
+        Called from meshhall.py after ConnectionManager is created.
+        Signature: def fn() -> int
+        """
+        self._contact_count_provider = fn
+
+    def get_radio_contact_count(self) -> int:
+        """
+        Return the live radio contact count via the registered provider.
+        Returns -1 if the provider has not been registered yet.
+        """
+        fn = getattr(self, "_contact_count_provider", None)
+        return fn() if fn else -1
+
     def register_listener(self, handler: HandlerFn):
         self._listeners.append(handler)
 
     def register_rehash_callback(self, fn):
         self._rehash_callbacks.append(fn)
 
+    def register_alias(self, alias: str, target: str, *, from_config: bool = False) -> bool:
+        """
+        Register alias_key -> target_key in the command table.
+
+        alias  : the new command name, with or without leading '!' (e.g. "ci" or "!ci")
+        target : the existing command to point at (e.g. "checkin" or "!checkin")
+
+        Rules:
+          - Target must already be registered.
+          - Alias must not collide with a real (non-alias) command.
+          - Alias must not point at another alias (no chaining).
+          - from_config=True aliases are tracked so they can be cleared on rehash.
+
+        Returns True on success, False on any validation failure (logged as warning).
+        """
+        alias_key  = "!" + alias.lstrip("!")
+        target_key = "!" + target.lstrip("!")
+
+        # Target must exist as a real command
+        target_entry = self._commands.get(target_key)
+        if not target_entry:
+            logger.warning(
+                f"Alias '{alias_key}' -> '{target_key}': target not found -- skipping."
+            )
+            return False
+
+        # Target must not itself be an alias
+        if target_key in self._aliases.values() or target_key in self._aliases:
+            # target_key is an alias key -- reject
+            if target_key in self._aliases:
+                logger.warning(
+                    f"Alias '{alias_key}' -> '{target_key}': target is itself an alias -- "
+                    "chaining not allowed, skipping."
+                )
+                return False
+
+        # Alias must not shadow a real command
+        if alias_key in self._commands and alias_key not in self._aliases:
+            logger.warning(
+                f"Alias '{alias_key}' -> '{target_key}': name collides with a real "
+                "command -- skipping."
+            )
+            return False
+
+        self._aliases[alias_key] = target_key
+        # Register in command table pointing at same entry so dispatch resolves normally
+        self._commands[alias_key] = target_entry
+        source = "config" if from_config else "plugin"
+        logger.debug(f"Alias registered ({source}): {alias_key} -> {target_key}")
+        return True
+
+    def _clear_config_aliases(self):
+        """Remove all aliases that were loaded from config (called before rehash reload)."""
+        # We track config aliases by storing them in a separate set
+        for alias_key in list(getattr(self, "_config_alias_keys", set())):
+            self._aliases.pop(alias_key, None)
+            # Only remove from _commands if it's still pointing at an alias target
+            # (a plugin may have registered a real command with the same name after)
+            if alias_key in self._commands and alias_key in self._aliases or \
+               alias_key not in self._commands:
+                self._commands.pop(alias_key, None)
+        self._config_alias_keys: set = set()
+
+    def load_config_aliases(self):
+        """
+        Read aliases from config.yaml and register them.
+        Called after all plugins have loaded, and again on rehash.
+        Format in config.yaml:
+          aliases:
+            absent: regrets
+            ci: checkin
+        """
+        if not hasattr(self, "_config_alias_keys"):
+            self._config_alias_keys: set = set()
+
+        aliases = self.config.get("aliases", {}) or {}
+        if not isinstance(aliases, dict):
+            logger.warning("config.yaml 'aliases' must be a mapping -- skipping.")
+            return
+
+        registered = 0
+        for alias, target in aliases.items():
+            alias_key = "!" + str(alias).lstrip("!")
+            ok = self.register_alias(alias, str(target), from_config=True)
+            if ok:
+                self._config_alias_keys.add(alias_key)
+                registered += 1
+
+        if registered:
+            logger.info(f"Loaded {registered} command alias(es) from config.")
+
     def log_admin_attempt(self, command: str, msg: Message,
                           granted: bool, reason: str = ""):
-        # Sync logging — use sender_name if available; format_user is async
+        # Sync logging -- use sender_name if available; format_user is async
         # and can't be awaited here. Full name enrichment happens at handle() time.
         name   = msg.sender_name or ""
         who    = f"{msg.sender_id} ({name})" if name else msg.sender_id
@@ -532,23 +645,26 @@ class Dispatcher:
         verb   = "GRANTED" if granted else "DENIED"
         logger.warning(
             f"ADMIN {verb}: {command} by {who} via {source}"
-            + (f" — {reason}" if reason else "")
+            + (f" -- {reason}" if reason else "")
         )
 
-    # ── Core dispatch ─────────────────────────────────────────────────────────
+    # -- Core dispatch ---------------------------------------------------------
 
     async def handle(self, msg: Message):
-        # 1. Upsert user — auto-creates at PRIV_DEFAULT, updates name/last_seen.
+        # 1. Upsert user -- auto-creates at PRIV_DEFAULT, updates name/last_seen.
         #    Skip for sender_id="unknown" (channel messages with no pubkey in
-        #    payload) — there is nothing meaningful to store and upsert would
+        #    payload) -- there is nothing meaningful to store and upsert would
         #    thrash a single shared "unknown" row with every channel sender's name.
         #    Unknown senders get PRIV_DEFAULT; they cannot be muted or privileged.
         if msg.sender_id == "unknown":
             privilege = PRIV_DEFAULT
         else:
-            privilege = await self.db.upsert_user(msg.sender_id, msg.sender_name)
+            privilege, db_name = await self.db.upsert_user(msg.sender_id, msg.sender_name)
+            # Backfill sender_name from DB if the message didn't carry one
+            if not msg.sender_name and db_name:
+                msg.sender_name = db_name
 
-        # 2. Muted — silent drop (not applicable to unknown, but kept for clarity)
+        # 2. Muted -- silent drop (not applicable to unknown, but kept for clarity)
         if privilege == PRIV_MUTED:
             who = await self.db.format_user(msg.sender_id, msg.sender_name)
             logger.info(f"MUTED: dropped from {who}")
@@ -573,10 +689,10 @@ class Dispatcher:
         cc  = self.command_char
         cmd = msg.get_command(cc)
 
-        # Welcome message — sent on first DM or if the user hasn't been
+        # Welcome message -- sent on first DM or if the user hasn't been
         # welcomed within the configured intro window.
         # Only fires when the message is NOT a command: if someone's first
-        # message is "!help", they don't need the intro — they already know
+        # message is "!help", they don't need the intro -- they already know
         # how to use the bot.
         if msg.is_dm and msg.sender_id != "unknown" and not cmd:
             await self._maybe_send_welcome(msg)
@@ -591,7 +707,7 @@ class Dispatcher:
 
         if cmd_key == "!help":
             logger.info(f"CMD: {cmd} by {who} via {source}")
-            # In channel: nudge user to DM — we can't send a useful help list
+            # In channel: nudge user to DM -- we can't send a useful help list
             # into a channel without the user's ID and it would flood the channel.
             if not msg.is_dm:
                 bot_name = self.config.get("bot.name", "MeshHall")
@@ -599,13 +715,13 @@ class Dispatcher:
                     msg, f"DM {bot_name} with {cc}help for the full command list."
                 )
                 return
-            # !help <command> — strip optional command_char prefix from arg.
+            # !help <command> -- strip optional command_char prefix from arg.
             # Handles: "!help ping", "!help !ping", "/help /ping", "! help ping"
             query = msg.arg_str.strip().lstrip(cc).lstrip("!").strip().lower()
             if query == "admin":
-                # Non-admins get unknown-command treatment — no hint it exists.
+                # Non-admins get unknown-command treatment -- no hint it exists.
                 if privilege < PRIV_ADMIN:
-                    logger.debug(f"!help admin ignored — {who} has priv {privilege}")
+                    logger.debug(f"!help admin ignored -- {who} has priv {privilege}")
                     return
                 reply = self._build_admin_help(cc)
             elif query:
@@ -623,16 +739,16 @@ class Dispatcher:
         # Display command with configured char in log/response messages
         cmd_display = cc + cmd_key.lstrip("!")
 
-        # 6. Scope check — resolved live from config (mirrors privilege resolution)
+        # 6. Scope check -- resolved live from config (mirrors privilege resolution)
         effective_scope = self.resolve_scope(entry)
         if effective_scope == "disabled":
-            logger.debug(f"{cmd_display} ignored — disabled via config")
+            logger.debug(f"{cmd_display} ignored -- disabled via config")
             return
         if effective_scope == "direct" and not msg.is_dm:
-            logger.debug(f"{cmd_display} ignored — direct-only, received in channel")
+            logger.debug(f"{cmd_display} ignored -- direct-only, received in channel")
             return
 
-        # 7. Privilege check — resolved live from config
+        # 7. Privilege check -- resolved live from config
         effective_priv = self.resolve_privilege(entry)
 
         if privilege < effective_priv:
@@ -648,16 +764,29 @@ class Dispatcher:
                 )
             return
 
-        # 8. Rate limit check — channel commands only; DMs are exempt.
-        #    Channel bucket exhausted → silent drop (logged in rate limiter).
-        #    Sender bucket exhausted  → warn once, then silent drop.
-        if not msg.is_dm:
+        # 8. Rate limit check.
+        #    Channel: per-channel bucket + per-sender bucket.
+        #    DM:      per-sender bucket only (reuses same capacity/rate config).
+        #    Sender bucket exhausted -> warn once, then silent drop.
+        #    Channel bucket exhausted -> silent drop (no reply; would worsen flooding).
+        if msg.is_dm:
+            rl = self._dm_rate_limiter.check(msg)
+            if rl.is_sender_warn:
+                secs = int(rl.retry_seconds) + 1
+                await self._enqueue_reply(
+                    msg,
+                    f"Slow down -- rate limit reached. Try again in ~{secs}s."
+                )
+                return
+            if rl.is_sender_silent:
+                return
+        else:
             rl = self._rate_limiter.check(msg)
             if rl.is_sender_warn:
                 secs = int(rl.retry_seconds) + 1
                 await self._enqueue_reply(
                     msg,
-                    f"Slow down — rate limit reached. Try again in ~{secs}s."
+                    f"Slow down -- rate limit reached. Try again in ~{secs}s."
                 )
                 return
             if rl.is_channel_limit or rl.is_sender_silent:
@@ -671,7 +800,7 @@ class Dispatcher:
                 f"CMD: {cmd_display} by {who} via {source} priv={privilege}/{effective_priv}"
             )
 
-        # Track usage for !stats — incremented before handler so even commands
+        # Track usage for !stats -- incremented before handler so even commands
         # that return errors are counted (reflects usage intent, not success).
         self._cmd_usage[cmd_key] = self._cmd_usage.get(cmd_key, 0) + 1
 
@@ -692,7 +821,7 @@ class Dispatcher:
         try:
             user = await self.db.get_user(msg.sender_id)
             if user is None:
-                return  # upsert_user just ran; race is benign — next message will welcome
+                return  # upsert_user just ran; race is benign -- next message will welcome
 
             intro_window = int(self.config.get("bot.intro_window_minutes", 60)) * 60
             welcomed_ts  = user["welcomed_ts"]
@@ -702,7 +831,7 @@ class Dispatcher:
                 if intro_window == 0:
                     return  # first-time only, already welcomed
                 if now - welcomed_ts < intro_window:
-                    return  # within window — don't repeat
+                    return  # within window -- don't repeat
 
             bot_name = self.config.get("bot.name", "MeshHall")
             cc       = self.command_char
@@ -716,7 +845,10 @@ class Dispatcher:
         # For channel messages, prefix the reply with @[sender_name] so the
         # recipient knows the response is directed at them.
         if msg.channel and msg.sender_name:
-            text = f"@[{msg.sender_name}]\n{text}"
+            # sender_name is sanitised at ingestion (connection.py:_sanitise_name)
+            # but guard here too in case Message is constructed outside that path.
+            safe_name = msg.sender_name.replace("\n", " ").replace("\r", "")[:48]
+            text = f"@[{safe_name}]\n{text}"
 
         chunks = chunk_text(text, MAX_CHUNK)
         # Carry channel_idx from raw payload so the connection layer can pass
@@ -736,19 +868,25 @@ class Dispatcher:
                     is_dm: bool = True,
                     command_char: str = "!") -> str:
         """
-        Simplified summary help — one line per command, no categories.
-        Admin commands are excluded from the index entirely.
+        Simplified summary help -- one line per command, no categories.
+        Admin commands and aliases are excluded from the index entirely.
         Admins get a note directing them to !help admin for their commands.
         Disabled commands are hidden regardless of privilege.
         """
-        lines = [f"Use {command_char}help <command> for details\n"]
+        lines = [f"Use {command_char}help <command> for details"]
 
         if privilege >= PRIV_ADMIN:
-            lines.append(f"Use {command_char}help admin for admin commands.\n")
+            lines.append(f"Use {command_char}help admin for admin commands.")
+        lines.append("")
+
         for stored_cmd, entry in sorted(self._commands.items()):
             if not entry.help_text:
                 continue
             if entry.is_admin:
+                continue
+            if stored_cmd in self._aliases:
+                continue
+            if entry.is_shortcut:
                 continue
             effective_scope = self.resolve_scope(entry)
             if effective_scope == "disabled":
@@ -762,7 +900,7 @@ class Dispatcher:
             lines.append(f"{display_cmd}: {short}")
 
         if len(lines) == 1:
-            return "MeshHall — no commands available at your privilege level."
+            return "MeshHall -- no commands available at your privilege level."
 
         return "\n".join(lines)
 
@@ -771,11 +909,15 @@ class Dispatcher:
         Admin-only command index. Only shown to users with PRIV_ADMIN.
         Non-admins get unknown-command treatment at the call site.
         """
-        lines = [f"Admin commands — use {command_char}help <command> for details\n"]
+        lines = [f"Admin commands -- use {command_char}help <command> for details\n"]
         for stored_cmd, entry in sorted(self._commands.items()):
             if not entry.is_admin:
                 continue
             if not entry.help_text:
+                continue
+            if stored_cmd in self._aliases:
+                continue
+            if entry.is_shortcut:
                 continue
             effective_scope = self.resolve_scope(entry)
             if effective_scope == "disabled":
@@ -791,16 +933,21 @@ class Dispatcher:
     def _build_command_help(self, query: str, privilege: int,
                              command_char: str = "!") -> str:
         """
-        Context-sensitive help for a single command.
+        Context-sensitive help for a single command or alias.
         Returns full description + usage + scope info.
-        Disabled commands are treated as unknown — silent from the user's view.
+        Disabled commands are treated as unknown -- silent from the user's view.
         """
         stored_cmd = "!" + query.lstrip("!")
-        entry = self._commands.get(stored_cmd)
+
+        # Resolve alias -- one level only, no chaining
+        is_alias   = stored_cmd in self._aliases
+        target_key = self._aliases.get(stored_cmd, stored_cmd)
+        entry      = self._commands.get(target_key)
+
         if not entry:
             return f"Unknown command: {command_char}{query}"
 
-        # Treat disabled the same as unknown — don't confirm its existence.
+        # Treat disabled the same as unknown
         if self.resolve_scope(entry) == "disabled":
             return f"Unknown command: {command_char}{query}"
 
@@ -808,11 +955,16 @@ class Dispatcher:
         if privilege < eff_priv:
             return f"Access denied. {command_char}{query} requires privilege {eff_priv}."
 
-        display_cmd = command_char + stored_cmd.lstrip("!")
+        display_cmd = command_char + target_key.lstrip("!")
         lines = [f"{display_cmd}: {entry.help_text}"]
+        if is_alias:
+            alias_display = command_char + stored_cmd.lstrip("!")
+            lines.append(f"(Alias: {alias_display} -> {display_cmd})")
+        elif entry.is_shortcut:
+            lines.append(f"(Shortcut -- see {display_cmd} for full usage)")
         if entry.usage_text:
             lines.append(f"Usage: {entry.usage_text}")
-        eff_scope = self.resolve_scope(entry)
+        eff_scope  = self.resolve_scope(entry)
         scope_note = "DM or channel" if eff_scope == "channel" else "DM only"
         lines.append(f"Scope: {scope_note} | Priv: {eff_priv}")
         return "\n".join(lines)
@@ -836,6 +988,10 @@ class Dispatcher:
             await self.db.set_privilege(admin_id, PRIV_ADMIN)
         if admin_ids:
             results.append(f"Admin privileges refreshed for {len(admin_ids)} user(s).")
+
+        # Reload config-defined aliases (clear old ones first)
+        self._clear_config_aliases()
+        self.load_config_aliases()
 
         for cb in self._rehash_callbacks:
             try:
@@ -906,8 +1062,8 @@ def _find_last(text: str, char: str, max_bytes: int) -> int:
 
 def chunk_text(text: str, max_bytes: int = MAX_CHUNK) -> List[str]:
     """
-    Split text into chunks whose UTF-8 byte length — including the [part/total]
-    prefix added by _send_reply — never exceeds max_bytes.
+    Split text into chunks whose UTF-8 byte length -- including the [part/total]
+    prefix added by _send_reply -- never exceeds max_bytes.
 
     The firmware limit is 156 bytes, not characters, so emoji and other
     multibyte codepoints are counted correctly.
@@ -938,7 +1094,7 @@ def chunk_text(text: str, max_bytes: int = MAX_CHUNK) -> List[str]:
             text = text[split + 1:]
             continue
 
-        # Hard cut — find max chars fitting in budget
+        # Hard cut -- find max chars fitting in budget
         i = b = 0
         while i < len(text):
             cb = _byte_len(text[i])

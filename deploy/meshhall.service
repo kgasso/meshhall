@@ -24,8 +24,10 @@ WorkingDirectory=/opt/meshhall
 # Activate the venv and run
 ExecStart=/opt/meshhall/venv/bin/python /opt/meshhall/meshhall.py
 
-Restart=on-failure
+Restart=always
 RestartSec=10
+# Exit code 42 = intentional !shutdown -- do not restart
+RestartPreventExitCodes=42
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=meshhall

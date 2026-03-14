@@ -8,7 +8,7 @@
 #   bash tools/backup_db.sh --db /opt/meshhall/data/meshhall.db --dest /tmp
 #   bash tools/backup_db.sh --keep 14           # keep 14 days of backups
 #
-# Safe to run while MeshHall is live — uses SQLite's .backup command which
+# Safe to run while MeshHall is live -- uses SQLite's .backup command which
 # copies an atomic, consistent snapshot even while the database is being written.
 #
 # Cron example (daily at 2am, keep 30 days):
@@ -20,12 +20,12 @@
 
 set -euo pipefail
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
+# -- Defaults ------------------------------------------------------------------
 DB_PATH="/opt/meshhall/data/meshhall.db"
 DEST_DIR="/opt/meshhall/data/backups"
 KEEP_DAYS=30
 
-# ── Colour helpers ─────────────────────────────────────────────────────────────
+# -- Colour helpers -------------------------------------------------------------
 if [ -t 1 ]; then
     GREEN='\033[0;32m'; CYAN='\033[0;36m'; RED='\033[0;31m'
     YELLOW='\033[1;33m'; RESET='\033[0m'
@@ -39,7 +39,7 @@ warn()  { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error() { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 die()   { error "$*"; exit 1; }
 
-# ── Argument parsing ───────────────────────────────────────────────────────────
+# -- Argument parsing -----------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --db)        DB_PATH="$2";   shift ;;
@@ -60,10 +60,10 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# ── Pre-flight ─────────────────────────────────────────────────────────────────
+# -- Pre-flight -----------------------------------------------------------------
 [ -f "$DB_PATH" ] || die "Database not found: $DB_PATH"
 
-# Find python3/sqlite3 — prefer the meshhall venv if available
+# Find python3/sqlite3 -- prefer the meshhall venv if available
 PYTHON=""
 for p in "/opt/meshhall/venv/bin/python3" "/opt/meshhall/venv/bin/python" \
           "$(which python3 2>/dev/null)" "$(which python 2>/dev/null)"; do
@@ -72,18 +72,18 @@ for p in "/opt/meshhall/venv/bin/python3" "/opt/meshhall/venv/bin/python" \
         break
     fi
 done
-[ -n "$PYTHON" ] || die "python3 not found — cannot perform safe SQLite backup"
+[ -n "$PYTHON" ] || die "python3 not found -- cannot perform safe SQLite backup"
 
 mkdir -p "$DEST_DIR"
 
-# ── Backup ─────────────────────────────────────────────────────────────────────
+# -- Backup ---------------------------------------------------------------------
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_FILE="$DEST_DIR/meshhall-${TIMESTAMP}.db"
 
 info "Source:  $DB_PATH"
 info "Dest:    $BACKUP_FILE"
 
-# Use SQLite's built-in online backup API via Python — safe while bot is running.
+# Use SQLite's built-in online backup API via Python -- safe while bot is running.
 # This creates an atomic, consistent copy even if the DB is being written to.
 "$PYTHON" - << PYEOF
 import sqlite3, sys
@@ -113,12 +113,12 @@ try:
 except Exception as e:
     print(f'Backup integrity check failed: {e}', file=sys.stderr)
     sys.exit(1)
-" || { rm -f "$BACKUP_FILE"; die "Backup verification failed — file removed."; }
+" || { rm -f "$BACKUP_FILE"; die "Backup verification failed -- file removed."; }
 
 BACKUP_SIZE="$(du -sh "$BACKUP_FILE" | cut -f1)"
 ok "Backup created: $BACKUP_FILE ($BACKUP_SIZE)"
 
-# ── Prune old backups ──────────────────────────────────────────────────────────
+# -- Prune old backups ----------------------------------------------------------
 if [ "$KEEP_DAYS" -gt 0 ]; then
     PRUNED=$(find "$DEST_DIR" -maxdepth 1 -name "meshhall-*.db" \
                   -mtime +"$KEEP_DAYS" -print -delete | wc -l)
@@ -127,6 +127,6 @@ if [ "$KEEP_DAYS" -gt 0 ]; then
     fi
 fi
 
-# ── Summary ────────────────────────────────────────────────────────────────────
+# -- Summary --------------------------------------------------------------------
 TOTAL=$(find "$DEST_DIR" -maxdepth 1 -name "meshhall-*.db" | wc -l)
 ok "Done. $TOTAL backup(s) in $DEST_DIR"

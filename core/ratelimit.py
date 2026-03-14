@@ -1,11 +1,16 @@
 """
-Channel rate limiting — token bucket implementation.
+Rate limiting -- token bucket implementation.
 
-Two independent buckets per channel message:
+Channel rate limiting uses two independent buckets per channel message:
   1. Per-sender-per-channel bucket: tracks one (channel_idx, sender_id) pair.
-     Exhaustion → warn sender once, then silent drop until refill.
+     Exhaustion -> warn sender once, then silent drop until refill.
   2. Per-channel bucket: tracks all senders on a channel_idx combined.
-     Exhaustion → silent drop + log. No warning sent (would worsen flooding).
+     Exhaustion -> silent drop + log. No warning sent (would worsen flooding).
+
+DM rate limiting uses a single per-sender bucket:
+  - Same token capacity and refill rate as the channel per-sender bucket.
+  - Exhaustion -> warn sender once, then silent drop until refill.
+  - No shared channel bucket (DMs have no shared channel to exhaust).
 
 Token bucket behaviour:
   - Starts full (capacity tokens available).
@@ -15,14 +20,14 @@ Token bucket behaviour:
     throttling sustained floods.
 
 Configuration (read live from config so !rehash picks up changes):
-  channels.rate_limit.enabled            true
+  channels.rate_limit.enabled                    true
   channels.rate_limit.per_sender.capacity        5
   channels.rate_limit.per_sender.refill_rate     0.1
   channels.rate_limit.per_channel.capacity       15
   channels.rate_limit.per_channel.refill_rate    0.5
-  channels.rate_limit.warn_on_limit      true
+  channels.rate_limit.warn_on_limit              true
 
-Rate limit state is intentionally in-memory only — does not survive
+Rate limit state is intentionally in-memory only -- does not survive
 restarts. A restart clears all buckets, which is the desired behaviour.
 """
 
@@ -43,11 +48,11 @@ class TokenBucket:
     Single token bucket.
 
     Attributes:
-        capacity     — maximum tokens (= max burst size)
-        refill_rate  — tokens added per second
-        _tokens      — current token count (float for smooth refill)
-        _last_refill — time.time() of last refill calculation
-        _warned      — True if we've sent the rate-limit warning for the
+        capacity     -- maximum tokens (= max burst size)
+        refill_rate  -- tokens added per second
+        _tokens      -- current token count (float for smooth refill)
+        _last_refill -- time.time() of last refill calculation
+        _warned      -- True if we've sent the rate-limit warning for the
                        current exhaustion period; reset when bucket refills
                        past the warn threshold (1 token).
     """
@@ -78,8 +83,8 @@ class TokenBucket:
 
         Returns:
             (allowed, tokens_remaining)
-            allowed          — True if token was available and consumed
-            tokens_remaining — float; negative means how far below zero we'd be
+            allowed          -- True if token was available and consumed
+            tokens_remaining -- float; negative means how far below zero we'd be
         """
         self._refill()
         if self._tokens >= 1.0:
@@ -129,9 +134,9 @@ class ChannelRateLimiter:
 
     def __init__(self, config):
         self._config = config
-        # (channel_idx, sender_id) → TokenBucket
+        # (channel_idx, sender_id) -> TokenBucket
         self._sender_buckets: Dict[Tuple, TokenBucket] = {}
-        # channel_idx → TokenBucket
+        # channel_idx -> TokenBucket
         self._channel_buckets: Dict[int, TokenBucket] = {}
 
     def _sender_key(self, msg) -> Tuple:
@@ -165,7 +170,7 @@ class ChannelRateLimiter:
         Check rate limits for an inbound channel command.
 
         Returns a RateLimitResult indicating what (if anything) should happen.
-        Only meaningful for channel messages — always returns ALLOWED for DMs.
+        Only meaningful for channel messages -- always returns ALLOWED for DMs.
 
         Check order: channel bucket first (shared resource), sender second.
         """
@@ -179,7 +184,7 @@ class ChannelRateLimiter:
         if ch_idx is None:
             return RateLimitResult.ALLOWED
 
-        # ── 1. Per-channel bucket (shared) ────────────────────────────────────
+        # -- 1. Per-channel bucket (shared) ------------------------------------
         ch_bucket = self._get_channel_bucket(ch_idx)
         ch_allowed, _ = ch_bucket.consume()
         if not ch_allowed:
@@ -187,11 +192,11 @@ class ChannelRateLimiter:
             logger.warning(
                 f"RATE LIMIT (channel): channel_idx={ch_idx} "
                 f"sender={msg.sender_id} ({msg.sender_name!r}) "
-                f"retry_in={secs:.0f}s — silent drop"
+                f"retry_in={secs:.0f}s -- silent drop"
             )
             return RateLimitResult.CHANNEL_LIMIT
 
-        # ── 2. Per-sender bucket ──────────────────────────────────────────────
+        # -- 2. Per-sender bucket ----------------------------------------------
         s_key    = self._sender_key(msg)
         s_bucket = self._get_sender_bucket(s_key)
         s_allowed, _ = s_bucket.consume()
@@ -216,6 +221,62 @@ class ChannelRateLimiter:
         return RateLimitResult.ALLOWED
 
 
+
+class DmRateLimiter:
+    """
+    Per-sender token bucket rate limiter for DM commands.
+
+    Reuses the same TokenBucket implementation and the same capacity /
+    refill_rate config values as the channel per-sender bucket.  There is
+    no shared channel bucket for DMs -- each sender gets their own bucket.
+    """
+
+    def __init__(self, config):
+        self._config = config
+        # sender_id -> TokenBucket
+        self._sender_buckets: Dict[str, TokenBucket] = {}
+
+    def _get_bucket(self, sender_id: str) -> TokenBucket:
+        if sender_id not in self._sender_buckets:
+            cap  = float(self._config.get("channels.rate_limit.per_sender.capacity",  5))
+            rate = float(self._config.get("channels.rate_limit.per_sender.refill_rate", 0.1))
+            self._sender_buckets[sender_id] = TokenBucket(cap, rate)
+        return self._sender_buckets[sender_id]
+
+    def check(self, msg) -> "RateLimitResult":
+        """
+        Check rate limit for an inbound DM command.
+        Returns ALLOWED, sender_warn, or SENDER_LIMIT_SILENT.
+        Only meaningful for DMs -- always returns ALLOWED for channel messages.
+        """
+        if not self._config.get("channels.rate_limit.enabled", True):
+            return RateLimitResult.ALLOWED
+
+        if not msg.is_dm:
+            return RateLimitResult.ALLOWED
+
+        bucket = self._get_bucket(msg.sender_id)
+        allowed, _ = bucket.consume()
+        if allowed:
+            return RateLimitResult.ALLOWED
+
+        secs           = bucket.seconds_until_token()
+        warn_once      = self._config.get("channels.rate_limit.warn_on_limit", True)
+        already_warned = bucket.warned
+
+        logger.warning(
+            f"RATE LIMIT (DM sender): sender={msg.sender_id} ({msg.sender_name!r}) "
+            f"retry_in={secs:.0f}s "
+            f"warn={'yes' if warn_once and not already_warned else 'no (already warned)'}"
+        )
+
+        if warn_once and not already_warned:
+            bucket.mark_warned()
+            return RateLimitResult.sender_warn(secs)
+
+        return RateLimitResult.SENDER_LIMIT_SILENT
+
+
 class RateLimitResult:
     """
     Result object from ChannelRateLimiter.check().
@@ -224,8 +285,8 @@ class RateLimitResult:
         result == RateLimitResult.ALLOWED
         result == RateLimitResult.CHANNEL_LIMIT
         result == RateLimitResult.SENDER_LIMIT_SILENT
-        result.is_sender_warn  → True if a warning should be sent
-        result.retry_seconds   → estimated seconds until next token
+        result.is_sender_warn  -> True if a warning should be sent
+        result.retry_seconds   -> estimated seconds until next token
     """
 
     ALLOWED             = None   # replaced below after class definition

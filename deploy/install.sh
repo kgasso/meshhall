@@ -9,12 +9,16 @@
 #   Custom path:     sudo bash install.sh --install-dir /srv/meshhall
 #
 # The script detects whether MeshHall is already installed and behaves
-# accordingly — preserving all config on upgrade, warning about diffs.
+# accordingly -- preserving all config on upgrade, warning about diffs.
 # =============================================================================
 
 set -euo pipefail
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
+# Ensure files created by this script are not world-readable or writable.
+# umask 027 -> dirs 750, files 640.
+umask 027
+
+# -- Defaults ------------------------------------------------------------------
 INSTALL_DIR="/opt/meshhall"
 SERVICE_USER="meshhall"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +54,7 @@ confirm() {
     fi
 }
 
-# ── Argument parsing ──────────────────────────────────────────────────────────
+# -- Argument parsing ----------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --yes|-y)        ASSUME_YES=true ;;
@@ -64,7 +68,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# ── Pre-flight checks ─────────────────────────────────────────────────────────
+# -- Pre-flight checks ---------------------------------------------------------
 header "MeshHall Installer"
 
 [ "$EUID" -eq 0 ] || die "This script must be run as root (use sudo)."
@@ -76,13 +80,13 @@ header "MeshHall Installer"
 # Detect fresh install vs upgrade
 if [ -f "$INSTALL_DIR/meshhall.py" ]; then
     FRESH_INSTALL=false
-    info "Existing installation detected at ${INSTALL_DIR} — running in upgrade mode."
+    info "Existing installation detected at ${INSTALL_DIR} -- running in upgrade mode."
 else
     FRESH_INSTALL=true
-    info "No existing installation found — running fresh install."
+    info "No existing installation found -- running fresh install."
 fi
 
-# ── System dependencies ───────────────────────────────────────────────────────
+# -- System dependencies -------------------------------------------------------
 header "System Dependencies"
 
 MISSING_PKGS=()
@@ -98,7 +102,7 @@ else
     ok "Python dependencies already installed."
 fi
 
-# ── Service account ───────────────────────────────────────────────────────────
+# -- Service account -----------------------------------------------------------
 header "Service Account"
 
 if id "$SERVICE_USER" &>/dev/null; then
@@ -119,11 +123,11 @@ for grp in dialout; do
             ok "Added '${SERVICE_USER}' to group '${grp}'."
         fi
     else
-        warn "Group '${grp}' not found — skipping."
+        warn "Group '${grp}' not found -- skipping."
     fi
 done
 
-# ── Stop services if upgrading ────────────────────────────────────────────────
+# -- Stop services if upgrading ------------------------------------------------
 if ! $FRESH_INSTALL; then
     header "Stopping Services"
     if systemctl is-active --quiet meshhall 2>/dev/null; then
@@ -133,7 +137,7 @@ if ! $FRESH_INSTALL; then
     fi
 fi
 
-# ── Config handling ───────────────────────────────────────────────────────────
+# -- Config handling -----------------------------------------------------------
 header "Configuration"
 
 # Build list of all config files from source
@@ -143,11 +147,11 @@ CONFIG_DIFFS=()    # files that exist in both and differ
 CONFIG_NEW=()      # files new in this release, not present in install
 
 if $FRESH_INSTALL; then
-    info "Fresh install — copying all config files."
+    info "Fresh install -- copying all config files."
     mkdir -p "$INSTALL_DIR/config/plugins"
     cp -r "$SCRIPT_DIR/config/." "$INSTALL_DIR/config/"
 else
-    info "Upgrade — checking config files for differences..."
+    info "Upgrade -- checking config files for differences..."
     mkdir -p "$INSTALL_DIR/config/plugins"
 
     for src_file in "${SRC_CONFIGS[@]}"; do
@@ -164,7 +168,7 @@ else
         fi
     done
 
-    # Copy new config files automatically (safe — they don't exist yet)
+    # Copy new config files automatically (safe -- they don't exist yet)
     if [ ${#CONFIG_NEW[@]} -gt 0 ]; then
         echo ""
         info "New config files in this release (copying automatically):"
@@ -177,7 +181,7 @@ else
         ok "${#CONFIG_NEW[@]} new config file(s) copied."
     fi
 
-    # Warn about diffs — show them and let the user decide
+    # Warn about diffs -- show them and let the user decide
     if [ ${#CONFIG_DIFFS[@]} -gt 0 ]; then
         echo ""
         warn "The following config files differ from the new release defaults:"
@@ -211,18 +215,20 @@ else
             info "Example: diff /opt/meshhall/config/plugins/weather.yaml{,.new}"
         fi
     else
-        ok "All config files match release defaults — no action needed."
+        ok "All config files match release defaults -- no action needed."
     fi
 fi
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/config"
+chmod -R o-rwx "$INSTALL_DIR/config"
+chmod -R g-w   "$INSTALL_DIR/config"
 
-# ── Data files ────────────────────────────────────────────────────────────────
+# -- Data files ----------------------------------------------------------------
 header "Data Files"
 
 # Enumerated data files shipped with the release.
 # On fresh install: always copy. On upgrade: warn and prompt if file differs,
-# same as config handling — an operator may have substituted their own dataset.
+# same as config handling -- an operator may have substituted their own dataset.
 #
 # NOTE: data files live in the source root (one level up from deploy/),
 # so we reference them via SOURCE_ROOT rather than SCRIPT_DIR.
@@ -242,7 +248,7 @@ for rel in "${DATA_FILES[@]}"; do
     dst_file="$INSTALL_DIR/$rel"
 
     if [ ! -f "$src_file" ]; then
-        warn "Source data file missing: $rel — skipping."
+        warn "Source data file missing: $rel -- skipping."
         continue
     fi
 
@@ -251,7 +257,7 @@ for rel in "${DATA_FILES[@]}"; do
     elif ! diff -q "$src_file" "$dst_file" &>/dev/null; then
         DATA_DIFFS+=("$rel")
     else
-        ok "$rel — unchanged."
+        ok "$rel -- unchanged."
     fi
 done
 
@@ -265,7 +271,7 @@ if [ ${#DATA_NEW[@]} -gt 0 ]; then
     done
 fi
 
-# Warn about changed data files — prompt before overwriting
+# Warn about changed data files -- prompt before overwriting
 if [ ${#DATA_DIFFS[@]} -gt 0 ]; then
     echo ""
     warn "The following data files differ from the release version:"
@@ -290,20 +296,22 @@ if [ ${#DATA_DIFFS[@]} -gt 0 ]; then
             chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/$rel"
             ok "$rel updated."
         else
-            info "$rel unchanged — keeping installed version."
+            info "$rel unchanged -- keeping installed version."
         fi
     done
 fi
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data"
+chmod -R o-rwx "$INSTALL_DIR/data"
+chmod -R g-w   "$INSTALL_DIR/data"
 
-# ── Deploy code ───────────────────────────────────────────────────────────────
+# -- Deploy code ---------------------------------------------------------------
 header "Deploying Code"
 
 # Create directory structure
 mkdir -p "$INSTALL_DIR"/{core,plugins,tools,deploy,data}
 
-# Code directories — always overwrite
+# Code directories -- always overwrite
 for dir in core plugins tools; do
     info "Deploying ${dir}/..."
     cp -r "$SCRIPT_DIR/$dir/." "$INSTALL_DIR/$dir/"
@@ -314,15 +322,16 @@ for f in meshhall.py requirements.txt; do
     cp "$SCRIPT_DIR/$f" "$INSTALL_DIR/$f"
 done
 
-# Deploy service files (always update — they reference paths, not user config)
+# Deploy service files (always update -- they reference paths, not user config)
 cp "$SCRIPT_DIR/deploy/meshhall.service" /etc/systemd/system/meshhall.service
 
 # Fix ownership
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+chmod -R o-rwx "$INSTALL_DIR"
 
 ok "Code deployed."
 
-# ── Virtual environment ───────────────────────────────────────────────────────
+# -- Virtual environment -------------------------------------------------------
 header "Python Virtual Environment"
 
 VENV="$INSTALL_DIR/venv"
@@ -340,7 +349,7 @@ sudo -u "$SERVICE_USER" "$VENV/bin/pip" install --quiet --no-cache-dir --upgrade
 sudo -u "$SERVICE_USER" "$VENV/bin/pip" install --quiet --no-cache-dir -r "$INSTALL_DIR/requirements.txt"
 ok "Python dependencies up to date."
 
-# ── Systemd ───────────────────────────────────────────────────────────────────
+# -- Systemd -------------------------------------------------------------------
 header "Systemd Services"
 
 systemctl daemon-reload
@@ -352,11 +361,11 @@ else
         systemctl enable meshhall
         ok "meshhall enabled."
     else
-        warn "meshhall not enabled — start manually with: sudo systemctl start meshhall"
+        warn "meshhall not enabled -- start manually with: sudo systemctl start meshhall"
     fi
 fi
 
-# ── First-run config reminder ─────────────────────────────────────────────────
+# -- First-run config reminder -------------------------------------------------
 if $FRESH_INSTALL; then
     header "First-Run Configuration Required"
     echo ""
@@ -364,29 +373,29 @@ if $FRESH_INSTALL; then
     echo ""
     echo "  Main config:"
     echo "    sudo -u meshhall nano $INSTALL_DIR/config/config.yaml"
-    echo "    → Set bot.admins (your node ID)"
-    echo "    → Set connection.serial_port (verify with: ls /dev/ttyACM*)"
+    echo "    -> Set bot.admins (your node ID)"
+    echo "    -> Set connection.serial_port (verify with: ls /dev/ttyACM*)"
     echo ""
     echo "  Weather plugin:"
     echo "    sudo -u meshhall nano $INSTALL_DIR/config/plugins/weather.yaml"
-    echo "    → Set zone (find at weather.gov/pimar/PubZone)"
-    echo "    → Set lat/lon"
+    echo "    -> Set zone (find at weather.gov/pimar/PubZone)"
+    echo "    -> Set lat/lon"
     echo ""
     echo "  Time plugin:"
     echo "    sudo -u meshhall nano $INSTALL_DIR/config/plugins/time.yaml"
-    echo "    → Set timezone"
+    echo "    -> Set timezone"
     echo ""
     echo "  Frequency directory:"
     echo "    sudo -u meshhall nano $INSTALL_DIR/config/plugins/frequencies.yaml"
-    echo "    → Add local repeaters and emergency frequencies"
+    echo "    -> Add local repeaters and emergency frequencies"
     echo ""
   fi
 
-# ── Start services ────────────────────────────────────────────────────────────
+# -- Start services ------------------------------------------------------------
 header "Starting Services"
 
 if $FRESH_INSTALL; then
-    if confirm "Start MeshHall now? (Recommended to configure first — see above)." "default_no"; then
+    if confirm "Start MeshHall now? (Recommended to configure first -- see above)." "default_no"; then
         systemctl start meshhall
         ok "meshhall started."
     else
@@ -406,7 +415,13 @@ else
     fi
 fi
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# -- Lock down permissions ----------------------------------------------------
+# Belt-and-suspenders pass: remove all world bits regardless of invoking umask.
+header "Permissions"
+chmod -R o-rwx "$INSTALL_DIR"
+ok "World bits removed from ${INSTALL_DIR}."
+
+# -- Summary -------------------------------------------------------------------
 header "Done"
 
 if $FRESH_INSTALL; then

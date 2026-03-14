@@ -1,14 +1,14 @@
 """
 Plugin: Network Statistics
 Commands:
-  !stats              — Summary across all sections
-  !stats messages     — Message volume (24h / 7d) and top senders
-  !stats users        — Active users (24h / 7d)
-  !stats channels     — Most active channels (7d)
-  !stats commands     — Top commands by usage this session
-  !stats alerts       — NWS alerts stored (7d)
-  !stats uptime       — Bot process uptime and start time
-  !stats wx           — ZIP lookup cache hit rate since last restart
+  !stats              -- Summary across all sections
+  !stats messages     -- Message volume (24h / 7d) and top senders
+  !stats users        -- Active users (24h / 7d)
+  !stats channels     -- Most active channels (7d)
+  !stats commands     -- Top commands by usage this session
+  !stats alerts       -- NWS alerts stored (7d)
+  !stats uptime       -- Bot process uptime and start time
+  !stats wx           -- ZIP lookup cache hit rate since last restart
 
 All sections are DM only, admin only.
 
@@ -52,7 +52,7 @@ def setup(dispatcher, config, db):
     def _now() -> int:
         return int(time.time())
 
-    # ── Section builders ──────────────────────────────────────────────────────
+    # -- Section builders ------------------------------------------------------
 
     async def _section_messages() -> str:
         now   = _now()
@@ -68,9 +68,12 @@ def setup(dispatcher, config, db):
         total = (await db.fetchone("SELECT COUNT(*) AS n FROM messages"))["n"]
 
         top = await db.fetchall(
-            """SELECT sender_name, sender_id, COUNT(*) AS n
-               FROM messages WHERE ts >= ?
-               GROUP BY sender_id ORDER BY n DESC LIMIT ?""",
+            """SELECT m.sender_id, COUNT(*) AS n,
+                      COALESCE(u.display_name, m.sender_name, m.sender_id) AS name
+               FROM messages m
+               LEFT JOIN users u ON u.pubkey_prefix = m.sender_id
+               WHERE m.ts >= ?
+               GROUP BY m.sender_id ORDER BY n DESC LIMIT ?""",
             (d7, TOP_N),
         )
 
@@ -79,8 +82,7 @@ def setup(dispatcher, config, db):
             f"Top senders (7d):",
         ]
         for r in top:
-            name = r["sender_name"] or r["sender_id"]
-            lines.append(f"  {name}: {r['n']}")
+            lines.append(f"  {r['name']}: {r['n']}")
         return "\n".join(lines)
 
     async def _section_users() -> str:
@@ -197,7 +199,7 @@ def setup(dispatcher, config, db):
         "wx":       _section_wx,
     }
 
-    # ── Command ───────────────────────────────────────────────────────────────
+    # -- Command ---------------------------------------------------------------
 
     async def cmd_stats(msg):
         arg = msg.arg_str.strip().lower()
@@ -209,7 +211,7 @@ def setup(dispatcher, config, db):
         if arg:
             return await SECTIONS[arg]()
 
-        # Summary — run all sections and join with blank line separators.
+        # Summary -- run all sections and join with blank line separators.
         # Each section is kept brief so the full summary fits in ~3 chunks.
         parts = []
         for fn in SECTIONS.values():
@@ -221,16 +223,16 @@ def setup(dispatcher, config, db):
 
     dispatcher.register_admin_command(
         "!stats", cmd_stats,
-        help_text="(Admin) Network and bot statistics",
+        help_text="Network and bot statistics",
         usage_text=(
-            "!stats                — full summary\n"
-            "!stats messages       — message volume and top senders\n"
-            "!stats users          — active user counts\n"
-            "!stats channels       — most active channels\n"
-            "!stats commands       — top commands this session\n"
-            "!stats alerts         — NWS alert counts\n"
-            "!stats uptime         — bot uptime\n"
-            "!stats wx             — ZIP cache hit rate"
+            "!stats                -- full summary\n"
+            "!stats messages       -- message volume and top senders\n"
+            "!stats users          -- active user counts\n"
+            "!stats channels       -- most active channels\n"
+            "!stats commands       -- top commands this session\n"
+            "!stats alerts         -- NWS alert counts\n"
+            "!stats uptime         -- bot uptime\n"
+            "!stats wx             -- ZIP cache hit rate"
         ),
         scope="direct", priv_floor=PRIV_ADMIN,
         category="admin", plugin_name="stats",

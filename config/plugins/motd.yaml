@@ -7,15 +7,15 @@
 # count for more bytes so keep the text concise.
 max_length: 300
 
-# ── Command scope ─────────────────────────────────────────────────────────────
-# Valid values (widest → narrowest): channel, direct, disabled
-#   channel  — responds in DMs and channels
-#   direct   — DM only
-#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# -- Command scope -------------------------------------------------------------
+# Valid values (widest -> narrowest): channel, direct, disabled
+#   channel  -- responds in DMs and channels
+#   direct   -- DM only
+#   disabled -- silently dropped; hidden from !help (any command can be disabled)
 # "channel" commands can be tightened to "direct" or "disabled" here.
 # "direct" commands marked [configurable] can be widened to "channel" here.
-# "direct" commands marked [locked] cannot be widened — but can be disabled.
+# "direct" commands marked [locked] cannot be widened -- but can be disabled.
 scopes:
-  motd:      direct  # default: direct [locked — DM only]
-  setmotd:   direct  # default: direct [locked — admin action, DM only]
-  clearmotd: direct  # default: direct [locked — admin action, DM only]
+  motd:      direct  # default: direct [locked -- DM only]
+  setmotd:   direct  # default: direct [locked -- admin action, DM only]
+  clearmotd: direct  # default: direct [locked -- admin action, DM only]

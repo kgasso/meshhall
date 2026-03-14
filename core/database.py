@@ -1,5 +1,5 @@
 """
-Database layer — async SQLite via aiosqlite.
+Database layer -- async SQLite via aiosqlite.
 Handles schema creation and provides helpers used by plugins.
 Each plugin is responsible for its own table definitions, registered via
 db.register_schema(). The core schema covers message logging and the
@@ -20,7 +20,7 @@ from typing import Optional, List, Any
 
 logger = logging.getLogger(__name__)
 
-# Privilege level constants — imported by dispatcher and plugins
+# Privilege level constants -- imported by dispatcher and plugins
 PRIV_MUTED   = 0   # silently ignored
 PRIV_DEFAULT = 1   # read-only, auto-assigned on first contact
 PRIV_ADMIN   = 15  # full access
@@ -47,30 +47,36 @@ CREATE TABLE IF NOT EXISTS plugin_meta (
 -- Auto-created on first contact; display_name updated from every inbound message
 -- and advertisement so names stay current without any manual action.
 CREATE TABLE IF NOT EXISTS users (
-    pubkey_prefix   TEXT PRIMARY KEY,
-    display_name    TEXT,
-    name_updated_ts INTEGER,
-    first_seen_ts   INTEGER NOT NULL,
-    last_seen_ts    INTEGER NOT NULL,
-    privilege       INTEGER NOT NULL DEFAULT 1,
-    welcomed_ts     INTEGER,
-    notes           TEXT
+    pubkey_prefix    TEXT PRIMARY KEY,
+    display_name     TEXT,
+    name_updated_ts  INTEGER,
+    first_seen_ts    INTEGER NOT NULL,
+    last_seen_ts     INTEGER NOT NULL,
+    privilege        INTEGER NOT NULL DEFAULT 1,
+    welcomed_ts      INTEGER,
+    notes            TEXT,
+    full_public_key  TEXT,
+    last_advert_ts   INTEGER,
+    contact_type     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_users_name ON users(display_name);
 """
 
 
-# Schema migrations — run on every startup; idempotent (column-exists errors ignored).
+# Schema migrations -- run on every startup; idempotent (column-exists errors ignored).
 _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN welcomed_ts INTEGER",
     "ALTER TABLE users ADD COLUMN home_zip TEXT",
+    "ALTER TABLE users ADD COLUMN full_public_key TEXT",
+    "ALTER TABLE users ADD COLUMN last_advert_ts INTEGER",
+    "ALTER TABLE users ADD COLUMN contact_type INTEGER",
 ]
 
 
 class Database:
     def __init__(self, db_path: str):
         self._path = Path(db_path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
         self._db: Optional[aiosqlite.Connection] = None
         self._extra_schemas: List[str] = []
 
@@ -86,7 +92,7 @@ class Database:
         await self._db.executescript(CORE_SCHEMA)
         for schema in self._extra_schemas:
             await self._db.executescript(schema)
-        # Migrations — ALTER TABLE for columns added after initial release.
+        # Migrations -- ALTER TABLE for columns added after initial release.
         # SQLite ignores duplicate column errors only if we catch them.
         for migration in _MIGRATIONS:
             try:
@@ -125,7 +131,7 @@ class Database:
         )
         await self.commit()
 
-    # ── User registry helpers ─────────────────────────────────────────────────
+    # -- User registry helpers -------------------------------------------------
 
     async def get_user(self, pubkey_prefix: str) -> Optional[aiosqlite.Row]:
         """Fetch a user record, or None if not yet seen."""
@@ -154,6 +160,64 @@ class Database:
             return f"{pubkey_prefix} ({name})"
         return pubkey_prefix
 
+    async def upsert_contact(self, pubkey_prefix: str, full_public_key: str,
+                             display_name: Optional[str] = None,
+                             contact_type: Optional[int] = None,
+                             _return_old_name: bool = False):
+        """
+        Upsert a user record from an advertisement event or contacts refresh.
+        Stores full_public_key, last_advert_ts, and contact_type.
+
+        Returns:
+          - True if new user, False if existing  (default)
+          - (True, None) or (False, old_display_name) if _return_old_name=True
+            (avoids a second SELECT for callers that need change detection)
+        """
+        now      = int(time.time())
+        existing = await self.get_user(pubkey_prefix)
+
+        if existing is None:
+            await self.execute(
+                """INSERT INTO users
+                   (pubkey_prefix, full_public_key, display_name, name_updated_ts,
+                    first_seen_ts, last_seen_ts, last_advert_ts, contact_type, privilege)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (pubkey_prefix, full_public_key,
+                 display_name, now if display_name else None,
+                 now, now, now, contact_type, PRIV_DEFAULT),
+            )
+            await self.commit()
+            logger.info(
+                f"New user from ADV: {pubkey_prefix}"
+                + (f" name={display_name!r}" if display_name else "")
+                + (f" type={contact_type}" if contact_type is not None else "")
+            )
+            return (True, None) if _return_old_name else True
+
+        # Update adv fields -- always refresh full_public_key, last_advert_ts, contact_type
+        old_name     = existing["display_name"]
+        new_name     = display_name if display_name else old_name
+        name_changed = bool(display_name and display_name != old_name)
+        name_ts      = now if name_changed else existing["name_updated_ts"]
+        # Only overwrite contact_type if we have a value -- don't clobber with None
+        new_type     = contact_type if contact_type is not None else existing["contact_type"]
+
+        await self.execute(
+            """UPDATE users SET
+               full_public_key=?, last_advert_ts=?, contact_type=?,
+               display_name=?, name_updated_ts=?
+               WHERE pubkey_prefix=?""",
+            (full_public_key, now, new_type, new_name, name_ts, pubkey_prefix),
+        )
+        await self.commit()
+
+        if name_changed:
+            logger.info(
+                f"Name updated via ADV: {pubkey_prefix} "
+                f"{old_name!r} -> {new_name!r}"
+            )
+        return (False, old_name) if _return_old_name else False
+
     async def set_welcomed(self, pubkey_prefix: str):
         """Record the current time as the last welcome message sent to this user."""
         now = int(time.time())
@@ -164,14 +228,19 @@ class Database:
         await self.commit()
 
     async def upsert_user(self, pubkey_prefix: str,
-                          display_name: Optional[str] = None) -> int:
+                          display_name: Optional[str] = None,
+                          _skip_window: int = 60) -> tuple:
         """
-        Get-or-create a user record. Returns the user's privilege level.
+        Get-or-create a user record.
+        Returns (privilege, display_name) tuple.
 
         On first contact: creates with privilege=1 (PRIV_DEFAULT).
         On subsequent contacts: updates last_seen_ts and display_name
         (only if a non-empty name is provided and it differs from stored).
-        Never downgrades privilege — only explicit !setpriv can change it.
+        Skips the UPDATE entirely when only last_seen_ts would change and
+        it was updated within the last _skip_window seconds -- reduces DB
+        churn on busy nets without losing accuracy.
+        Never downgrades privilege -- only explicit !setpriv can change it.
         """
         now = int(time.time())
         existing = await self.get_user(pubkey_prefix)
@@ -191,14 +260,19 @@ class Database:
                 + (f" name={display_name!r}" if display_name else "")
                 + f" privilege={PRIV_DEFAULT}"
             )
-            return PRIV_DEFAULT
+            return (PRIV_DEFAULT, display_name)
 
-        # Update last_seen and name if we got a better one
-        old_name  = existing["display_name"]
-        new_name  = display_name if display_name else old_name
+        old_name     = existing["display_name"]
+        new_name     = display_name if display_name else old_name
         name_changed = bool(display_name and display_name != old_name)
-        name_ts   = now if name_changed else existing["name_updated_ts"]
 
+        # Skip write if name hasn't changed and last_seen was updated recently
+        if not name_changed:
+            age = now - (existing["last_seen_ts"] or 0)
+            if age < _skip_window:
+                return (existing["privilege"], old_name)
+
+        name_ts = now if name_changed else existing["name_updated_ts"]
         await self.execute(
             """UPDATE users SET
                last_seen_ts=?, display_name=?, name_updated_ts=?
@@ -210,10 +284,10 @@ class Database:
         if name_changed:
             logger.info(
                 f"User name updated: {pubkey_prefix} "
-                f"{old_name!r} → {display_name!r}"
+                f"{old_name!r} -> {display_name!r}"
             )
 
-        return existing["privilege"]
+        return (existing["privilege"], new_name)
 
     async def get_privilege(self, pubkey_prefix: str) -> int:
         """
@@ -225,7 +299,7 @@ class Database:
         )
         if row:
             return row["privilege"]
-        # First contact — auto-create at default privilege
+        # First contact -- auto-create at default privilege
         return await self.upsert_user(pubkey_prefix)
 
     async def set_privilege(self, pubkey_prefix: str, privilege: int) -> bool:

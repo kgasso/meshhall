@@ -1,20 +1,20 @@
 # config/plugins/weather.yaml
 
-# ── Location ──────────────────────────────────────────────────────────────────
+# -- Location ------------------------------------------------------------------
 # Your local ZIP code. Used for home-zone forecast and alert polling.
 # Coordinates are resolved from data/zip_code_database.csv at startup.
 # Run !rehash after changing this value.
 home_zip: "97526"
 
-# ── Alert broadcasting ────────────────────────────────────────────────────────
+# -- Alert broadcasting --------------------------------------------------------
 # Leave blank to disable auto-broadcast (recommended default).
 alert_channel: ""
 
-# ── Polling ───────────────────────────────────────────────────────────────────
+# -- Polling -------------------------------------------------------------------
 poll_interval: 900
 forecast_interval: 3600
 
-# ── ZIP code lookup ───────────────────────────────────────────────────────────
+# -- ZIP code lookup -----------------------------------------------------------
 # Path to the ZIP centroid CSV, relative to the project root.
 # Default dataset: http://uszipcodelist.com/zip_code_database.csv
 # Save it as data/zip_code_database.csv (or change the path below).
@@ -38,27 +38,27 @@ zip_columns:
 # with a timestamp note.
 zip_cache_ttl: 1800
 
-# ── NWS API ───────────────────────────────────────────────────────────────────
+# -- NWS API -------------------------------------------------------------------
 user_agent: "MeshHall/1.0 (mesh-network-bot)"
 
-# ── Command privileges ────────────────────────────────────────────────────────
+# -- Command privileges --------------------------------------------------------
 privileges:
-  wx:         1     # floor: 1 — anyone can check the forecast
-  alerts:     1     # floor: 1 — anyone can check active alerts
-  alert:      1     # floor: 1 — anyone can read a specific alert
-  wxrefresh:  15    # floor: 15 — admin only force-refresh
+  wx:         1     # floor: 1 -- anyone can check the forecast
+  alerts:     1     # floor: 1 -- anyone can check active alerts
+  alert:      1     # floor: 1 -- anyone can read a specific alert
+  wxrefresh:  15    # floor: 15 -- admin only force-refresh
 
-# ── Command scope ─────────────────────────────────────────────────────────────
-# Valid values (widest → narrowest): channel, direct, disabled
-#   channel  — responds in DMs and channels
-#   direct   — DM only
-#   disabled — silently dropped; hidden from !help (any command can be disabled)
+# -- Command scope -------------------------------------------------------------
+# Valid values (widest -> narrowest): channel, direct, disabled
+#   channel  -- responds in DMs and channels
+#   direct   -- DM only
+#   disabled -- silently dropped; hidden from !help (any command can be disabled)
 # "channel" commands can be tightened to "direct" or "disabled" here.
 # "direct" commands marked [configurable] can be widened to "channel" here.
-# "direct" commands marked [locked] cannot be widened — but can be disabled.
+# "direct" commands marked [locked] cannot be widened -- but can be disabled.
 scopes:
-  wx:         direct  # default: direct [configurable — can widen to channel]
-  alerts:     direct  # default: direct [configurable — can widen to channel]
-  alert:      direct  # default: direct [locked — full alert text, DM only]
-  setloc:     direct  # default: direct [locked — user preference, DM only]
-  wxrefresh:  direct  # default: direct [locked — admin only, DM only]
+  wx:         direct  # default: direct [configurable -- can widen to channel]
+  alerts:     direct  # default: direct [configurable -- can widen to channel]
+  alert:      direct  # default: direct [locked -- full alert text, DM only]
+  setloc:     direct  # default: direct [locked -- user preference, DM only]
+  wxrefresh:  direct  # default: direct [locked -- admin only, DM only]

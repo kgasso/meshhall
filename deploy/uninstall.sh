@@ -10,7 +10,7 @@
 #
 # What this removes:
 #   - systemd services (stopped, disabled, unit files deleted)
-#   - /opt/meshhall/  (code, venv, config, logs — but NOT data/ by default)
+#   - /opt/meshhall/  (code, venv, config, logs -- but NOT data/ by default)
 #   - meshhall system user and group
 #
 # What this keeps by default:
@@ -23,13 +23,13 @@
 
 set -euo pipefail
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
+# -- Defaults ------------------------------------------------------------------
 INSTALL_DIR="/opt/meshhall"
 SERVICE_USER="meshhall"
 DELETE_DB=false
 ASSUME_YES=false
 
-# ── Colour helpers ─────────────────────────────────────────────────────────────
+# -- Colour helpers -------------------------------------------------------------
 if [ -t 1 ]; then
     RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
     CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
@@ -57,7 +57,7 @@ confirm() {
     fi
 }
 
-# ── Argument parsing ───────────────────────────────────────────────────────────
+# -- Argument parsing -----------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --delete-db)         DELETE_DB=true ;;
@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# ── Pre-flight ─────────────────────────────────────────────────────────────────
+# -- Pre-flight -----------------------------------------------------------------
 header "MeshHall Uninstaller"
 
 [ "$EUID" -eq 0 ] || die "This script must be run as root (use sudo)."
@@ -86,7 +86,7 @@ if [ ! -d "$INSTALL_DIR" ] && ! id "$SERVICE_USER" &>/dev/null; then
     die "MeshHall does not appear to be installed (no directory at $INSTALL_DIR and no '$SERVICE_USER' user)."
 fi
 
-# ── Summarise what will be removed ────────────────────────────────────────────
+# -- Summarise what will be removed --------------------------------------------
 echo ""
 info "This will remove:"
 echo "    - systemd services: meshhall, meshhall-same"
@@ -110,7 +110,7 @@ fi
 echo ""
 confirm "Proceed with uninstall?" "default_no" || { info "Uninstall cancelled."; exit 0; }
 
-# ── Stop and disable services ─────────────────────────────────────────────────
+# -- Stop and disable services -------------------------------------------------
 header "Stopping Services"
 
 for svc in meshhall meshhall-same; do
@@ -129,7 +129,7 @@ for svc in meshhall meshhall-same; do
     fi
 done
 
-# ── Remove systemd unit files ─────────────────────────────────────────────────
+# -- Remove systemd unit files -------------------------------------------------
 header "Removing Systemd Unit Files"
 
 for unit in meshhall.service meshhall-same.service; do
@@ -138,14 +138,14 @@ for unit in meshhall.service meshhall-same.service; do
         rm -f "$path"
         ok "Removed $path"
     else
-        info "$path not found — skipping."
+        info "$path not found -- skipping."
     fi
 done
 
 systemctl daemon-reload
 ok "systemd daemon reloaded."
 
-# ── Remove install directory ───────────────────────────────────────────────────
+# -- Remove install directory ---------------------------------------------------
 header "Removing Installation Files"
 
 if [ -d "$INSTALL_DIR" ]; then
@@ -174,7 +174,7 @@ if [ -d "$INSTALL_DIR" ]; then
             cp -a "$TMP_DATA/." "$INSTALL_DIR/data/"
             rm -rf "$TMP_DATA"
 
-            # Restore ownership if the user still exists (it does — we remove them next)
+            # Restore ownership if the user still exists (it does -- we remove them next)
             if id "$SERVICE_USER" &>/dev/null; then
                 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data" 2>/dev/null || true
             fi
@@ -186,10 +186,10 @@ if [ -d "$INSTALL_DIR" ]; then
         fi
     fi
 else
-    info "$INSTALL_DIR not found — skipping directory removal."
+    info "$INSTALL_DIR not found -- skipping directory removal."
 fi
 
-# ── Remove service user ────────────────────────────────────────────────────────
+# -- Remove service user --------------------------------------------------------
 header "Removing Service Account"
 
 if id "$SERVICE_USER" &>/dev/null; then
@@ -198,7 +198,7 @@ if id "$SERVICE_USER" &>/dev/null; then
     userdel "$SERVICE_USER"
     ok "User '${SERVICE_USER}' removed."
 else
-    info "User '${SERVICE_USER}' not found — skipping."
+    info "User '${SERVICE_USER}' not found -- skipping."
 fi
 
 # Remove the group if it still exists (userdel may or may not remove it)
@@ -206,7 +206,7 @@ if getent group "$SERVICE_USER" &>/dev/null; then
     groupdel "$SERVICE_USER" 2>/dev/null && ok "Group '${SERVICE_USER}' removed." || true
 fi
 
-# ── Summary ────────────────────────────────────────────────────────────────────
+# -- Summary --------------------------------------------------------------------
 header "Done"
 
 if $DELETE_DB; then
