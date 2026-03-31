@@ -6,18 +6,250 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 
 ## Known Enhancements / Future Work
 
-- **Logging:** Currently writes to both `stdout` (captured by systemd journal via
-  `StandardOutput=journal`) and a flat file (`data/meshhall.log`). The flat file
-  has no rotation and will grow indefinitely. Options: drop the file handler in
-  favour of journal-only, or replace `FileHandler` with `RotatingFileHandler`.
-  For now the file is a useful `tail -f` fallback; revisit when disk management
-  becomes a concern.
+- **Lightning detection:** Blitzortung.org WebSocket feed (free, no API key)
+  or AS3935 Franklin sensor (I2C/SPI, grid-down capable) -- in planning, not yet 
+  implemented.
+
+## [v0.9.6] -- 2026-03-31
+
+### Core v0.9.6
+
+- **`last_hops` column on `users` table** (`core/database.py`): New integer
+  column stores the most recently observed hop count for each node. Schema
+  migration runs automatically on startup. `upsert_contact()` accepts an
+  optional `last_hops` parameter; a new `update_last_hops()` helper allows
+  targeted hop-count updates without a full contact upsert.
+
+- **Hop count persistence from ADV + inbound messages** (`core/connection.py`,
+  `core/dispatcher.py`): `path_len` is now extracted from ADV event payloads
+  (and the refreshed contacts cache) and persisted via `upsert_contact()`.
+  For inbound DM and channel messages, `dispatcher.handle()` calls
+  `update_last_hops()` after `upsert_user()` whenever `msg.path_len` is
+  present -- keeping hop data current without waiting for an ADV event.
+
+- **Dispatcher providers: `get_channel_by_name` and `get_contacts_snapshot`**
+  (`core/dispatcher.py`, `core/connection.py`): Two new provider pairs
+  registered at connection startup alongside the existing `contact_count`
+  and `node_info` providers.
+  - `dispatcher.get_channel_by_name(name)` -- async; queries the `_channels`
+    DB table by name (case-insensitive); returns a row dict or `None`.
+  - `dispatcher.get_contacts_snapshot()` -- sync; returns a shallow copy of
+    the in-memory contacts cache for supplemental field lookups.
+
+- **Announce disable on channel rename/removal** (`core/connection.py`): The
+  `enumerate_channels()` slot reconciliation loop now calls the new
+  `_disable_announcements_for_channel(old_name)` helper whenever a slot is
+  renamed or is absent from the radio scan. Active announcements targeting
+  the old channel name are set to `active=0` (recoverable) with a WARNING
+  log per slug. The helper is a no-op if the announcements table does not
+  exist (announce plugin disabled).
+
+### Plugin v0.2.0 -- announce (`plugins/12_announce.py`)
+
+- **`!announce create` channel validation** (`plugins/12_announce.py` v0.2.0):
+  The create subcommand now validates the target channel name against the
+  `_channels` DB table via `dispatcher.get_channel_by_name()` before
+  inserting the announcement. Three rejection cases:
+  - Channel name not found: instructs operator to run `!channel sync`.
+  - Channel found but safety-disabled (`disabled_at` set): instructs operator
+    to re-enable with `!channel set <idx> on`.
+  - Channel found but `respond=off`: instructs operator to enable responding
+    first.
+
+- **`!announce` stores and uses `channel_idx`** (`plugins/12_announce.py`
+  v0.2.0): The `announcements` table gains a `channel_idx INTEGER` column
+  (migration in `core/database.py`). The resolved slot index is stored at
+  create time and used directly in the fire loop's `reply_queue` payload,
+  ensuring reliable delivery across all meshcore API versions. Pre-existing
+  rows with `channel_idx=NULL` fall back to a name lookup at fire time.
+
+### Plugin v0.1.0 -- heard (`plugins/13_heard.py`, new)
+
+- **`!heard` command** (`plugins/13_heard.py` v0.1.0): New standalone plugin.
+  Lists nodes the radio has heard recently, sourced from the `users` DB table
+  (`last_advert_ts`) supplemented with live data from the contacts cache
+  (hop count fallback). Scope: DM only, privilege floor 1.
+  - `!heard` -- last 10 nodes by most recent advert
+  - `!heard <N>` -- last N nodes (cap 50)
+  - `!heard <query>` -- filter by partial name or pubkey prefix
+  - `!heard <N> <query>` -- last N matching query
+  Output format: `Name (prefix) | Xm ago | hops:N` (hops omitted if unknown).
+
+### Plugin v0.7.0 -- bulletin (`plugins/03_bulletin.py`)
+
+- **`!bulletin post ttl` with draft** (`plugins/03_bulletin.py` v0.7.0): TTL
+  parsing was inside the `if content:` block, so `!bulletin post ttl 24h`
+  with an empty inline body never reached the parser -- the draft was posted
+  without expiry. TTL is now parsed unconditionally before the
+  inline/draft decision.
+
+- **`!bulletin` TTL minutes support** (`plugins/03_bulletin.py` v0.7.0):
+  `_parse_ttl` now accepts `m` suffix for minutes (e.g. `30m`). Error
+  messages, help text, and docstrings updated throughout.
+
+---
+
+## [v0.9.5] -- Unreleased
+
+### Core v0.9.5
+
+- **`!cancel` builtin** (`core/dispatcher.py`): New admin DM command that
+  aborts any pending confirmation for the sender -- covers `!restart`,
+  `!shutdown`, and `!node set <field>`. Logs the cancellation via
+  `log_admin_attempt()`. Self-cancel only -- each admin can only cancel their
+  own pending confirmation.
+
+- **Confirmation flow -- initial request logging** (`core/dispatcher.py`):
+  `!restart` and `!shutdown` now call `log_admin_attempt(granted=False,
+  reason="awaiting confirmation")` on the initial request, not only on the
+  confirmation. Consistent with `!node set` logging in this release.
+
+- **Confirmation warning text** (`core/dispatcher.py`): `!restart` and
+  `!shutdown` warning replies now include a `!cancel` line alongside the
+  confirm instruction. Usage text for both commands updated to show `!cancel`.
+
+- **`_pending_confirm` unified for `!node set`** (`core/dispatcher.py`,
+  `plugins/11_node.py`): `!node set` disruptive-field confirmations now use
+  `dispatcher._pending_confirm` (keyed by `sender_id`, action prefixed
+  `node_set_<field>`) instead of the former module-level `_pending_set` dict.
+  All pending confirm state is in one place; `!cancel` covers node-set
+  confirmations automatically.
+
+- **Log rotation -- flat file removed** (`meshhall.py`, `config/config.yaml`):
+  The `FileHandler` writing to `data/meshhall.log` has been removed. All logs
+  go to stdout only, captured by journald via `StandardOutput=journal` in the
+  systemd unit. journald handles rotation automatically via its own size and
+  retention policy (`/etc/systemd/journald.conf`). The `log_file` key has been
+  removed from `config.yaml`. View logs with `journalctl -u meshhall -f`.
+
+### Plugin v0.3.0 -- node (`plugins/11_node.py`)
+
+- **60-second TTL on `!node set` confirmations**: Pending confirmations expire
+  after 60 seconds, matching `!restart` / `!shutdown`. Sending `!node set
+  confirm` after expiry returns a timeout message and clears pending state.
+- **`!node set cancel` subcommand**: In addition to the global `!cancel`,
+  `!node set cancel` also clears a pending node-set confirmation.
+- **`log_admin_attempt()` on all `!node set` paths**: Initial request
+  (`granted=False`), TTL expiry (`granted=False`), confirmed execution
+  (`granted=True`), autoadd no-confirm path (`granted=True`), and cancel
+  (`granted=True`).
+- Help and usage text updated to mention `!cancel`.
+
+### Plugin v0.6.0 -- weather (`plugins/05_weather.py`)
+
+- **Wind and precipitation in `!wx` forecasts**: Each forecast period now
+  includes wind direction and speed (`windDirection` + `windSpeed` from NWS)
+  and precipitation probability (`probabilityOfPrecipitation.value`) when
+  present in the NWS response. Format: `Name: 52°F, Mostly Sunny | Wind: SW
+  10 mph | Precip: 20%`. Fields are omitted silently if NWS does not return
+  them for a given period.
+
+### Plugin v0.6.0 -- bulletin (`plugins/03_bulletin.py`)
+
+- **Optional bulletin expiry (TTL)**: Bulletins can be posted with an expiry
+  time using the `ttl` suffix on `!bulletin post`:
+  - `!bulletin post <text> ttl 24h` -- expires in 24 hours
+  - `!bulletin post <text> ttl 7d`  -- expires in 7 days
+  - Drafts published via `!bulletin post` (no text) do not get a TTL unless
+    the TTL suffix is included in the `!bulletin post ttl <X>` call.
+  - `!bulletin list` and `!bulletin show` silently exclude expired bulletins.
+    `!bulletin show <id>` on an expired bulletin returns an expiry message and
+    soft-deletes it.
+  - Expiry timestamp shown in `!bulletin list` (`[exp MM-DD HH:MMz]`) and
+    `!bulletin show` output.
+  - **Migration**: `expires_ts INTEGER` column added to `bulletins` table via
+    a listener-triggered `ALTER TABLE` on first message. Fully backward
+    compatible -- existing rows get `expires_ts = NULL` (no expiry).
+
+### Plugin v0.1.0 -- announce (`plugins/12_announce.py`, new)
+
+- **New scheduled announcements plugin**: Sends text messages to a configured
+  channel on a cron schedule. Admin-only create/delete; anyone can list/show.
+- **Commands**: `!announce list`, `!announce show <slug>`, `!announce create
+  <slug> <channel> <schedule> -- <text>`, `!announce delete <slug>`.
+- **Schedule formats** (same parser as nets plugin):
+  - `daily HH:MM`
+  - `weekly <day> HH:MM`
+  - `monthly <Nth> <day> HH:MM`
+  - `once YYYY-MM-DD HH:MM` (one-shot)
+- **Recurring vs one-shot**: Recurring announcements (`daily`, `weekly`,
+  `monthly`) fire on every matching cron occurrence. One-shot announcements
+  (`once`) fire once and are automatically deactivated.
+- **Background loop**: Polls every 60 seconds, fires announcements whose
+  previous cron occurrence (or `once_ts`) falls within the last 2 minutes and
+  hasn't been sent yet. Tolerates bot restarts within the 2-minute window.
+- **Config**: `config/plugins/announce.yaml` added.
+- **Schema**: `announcements` table with slug, channel, text, schedule,
+  cron_expr, once_ts, recurring, timezone, active, created_by, last_sent_ts.
+
+---
+
+## [v0.9.4] -- Unreleased
+
+### Core v0.9.4
+
+- **Provider self-registration** (`core/connection.py`): `ConnectionManager`
+  now registers `contact_count` and `node_info` dispatcher providers
+  automatically after the radio connects, instead of requiring explicit wiring
+  in `meshhall.py`. Future providers follow the same pattern -- no edits to
+  `meshhall.py` needed. The manual registration lines have been removed from
+  `meshhall.py` and replaced with a comment noting the new location.
+
+- **ADMIN CMD log** (`core/dispatcher.py`): WARNING log for admin commands now
+  includes the full message content, making it possible to see exactly what was
+  sent without cross-referencing INFO-level DM receive logs.
+  Example: `ADMIN CMD: !node by 3f82e4... via DM | '!node set name W7KRG Bot'`
+
+- **`!node` help text** (`plugins/11_node.py`): Consolidated two separate
+  `!node set` lines in the command list into a single line:
+  `!node set [field] [val] -- configure a field; omit args to list options`
+
+---
+
+## [v0.9.3] -- Unreleased
+
+### Core v0.9.3
+
+- **Dispatcher node info provider** (`core/dispatcher.py`):
+  `register_node_info_provider()` and `async get_node_info()` following the
+  established provider pattern. meshhall-web and other plugins can call
+  `dispatcher.get_node_info()` without direct serial access.
+
+- **ConnectionManager `get_node_info()`** (`core/connection.py`): Queries
+  `send_appstart`, `get_bat`, `get_self_telemetry`, `get_stats_core`,
+  `get_stats_radio`, `get_stats_packets`, and `get_autoadd_config`
+  independently -- a failure in one does not block the others.
+  
+  - **README architecture section**: Added `11_node.py`, `tools/`, and `docs/`
+  to the project structure overview.
+
+
+### Plugin v0.1.0 -- node (`plugins/11_node.py`, new)
+
+- **`!node` plugin** (`plugins/11_node.py`): New admin-only command for querying
+  and configuring the radio node. Subcommands:
+  - `!node info` -- radio config and identity (freq, BW, SF, CR, TX power,
+    node name, public key prefix, AutoAdd config)
+  - `!node hw` -- hardware health (battery voltage, flash used/total, firmware
+    uptime, error/queue counts)
+  - `!node rf` -- RF conditions and firmware packet stats (noise floor, RSSI,
+    SNR, air time, recv/sent/flood/direct/error counts)
+  - `!node set freq <MHz>` -- set radio frequency (confirm required)
+  - `!node set name <n>` -- set node display name (confirm required)
+  - `!node set txpower <dBm>` -- set transmit power (confirm required)
+  - `!node set autoadd <types>` -- set auto-add contact types (no confirm)
+  All data fetched on-demand from the radio -- never cached.
+  
+  Autoadd bitmask interpretation:
+  bit0 = Selected mode (vs Auto Add All), bit1 = Chat, bit2 = Repeaters,
+  bit3 = Room Servers, bit4 = Sensors. Confirmed against live firmware data.
+
 
 ---
 
 ## [v0.9.2] -- 2026-03-14
 
-### Fixed
+### Core v0.9.2
 
 - **Contact remove race condition** (`core/connection.py`): Added a 0.25s sleep
   in `_remove_contact` after calling `remove_contact` on the radio. The NRF52840
@@ -32,7 +264,7 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 
 ## [v0.9.1] -- Unreleased
 
-### Added
+### Core v0.9.1
 
 - **Contact pruning**: Added contact pruning to keep the node/radio device from
   exceeding contact limits with auto-add enabled. Partner nodes must be in contacts
@@ -47,7 +279,32 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 
 ## [v0.9.0] -- Unreleased
 
-### Added
+### Core v0.9.0
+- **`croniter>=2.0.0`** added to `requirements.txt`
+- **Generic command alias system** -- define shorthand aliases for any registered
+  command in `config.yaml` under `aliases:`. Aliases inherit scope, privilege,
+  and all properties from their target. No chaining, no collision with real
+  commands. Changes take effect on `!rehash`.
+- **`.gitignore`** -- excludes `data/meshhall.db`, `data/meshhall.log`, `venv/`,
+  `__pycache__/`, `*.pyc`, and editor artifacts.
+- **`!net` subcommand dispatcher** -- all net management commands consolidated
+  under `!net <subcommand>`. Standalone shortcuts `!checkin`, `!regrets`, `!roll`
+  retained for ergonomics.
+- **`!bulletin` subcommand dispatcher** -- `!post`, `!bulletins`, `!bulletin <id>`,
+  `!delbul` replaced by `!bulletin <list|show|post|delete>`. Shortcuts `!post`
+  and `!bulletins` retained.
+- **`!freq` subcommand dispatcher** -- `!freqs`, `!freq <n>`, `!addfreq`,
+  `!delfreq` replaced by `!freq <list|show|add|delete>`. Shortcut `!freqs`
+  retained.
+- **`!channel` subcommand dispatcher** -- `!channels` (list) and `!channel`
+  (admin control) merged into `!channel <list|set|sync>`.
+- **`!replay` subcommand dispatcher** -- `!replay` and `!search` consolidated
+  into `!replay <list|search>`. Shortcut `!search` retained.
+- **`!help` index** -- aliases excluded from listing. `!help <alias>` still
+  works and notes the alias relationship.
+
+
+### Plugin v0.1.0 -- nets (`plugins/02_nets.py`, new)
 - **`02_nets` plugin** -- Full net management system replacing the removed
   `02_checkin` plugin. Features:
   - Named nets with hyphenated slug identifiers (e.g. `ares-district-5`)
@@ -70,43 +327,19 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
     distinctly in `!net roll`
   - `!net promote <net> <user>` -- promote a guest to full member
   - Net creation privilege configurable in `nets.yaml` (default 15, floor 2)
-- **`croniter>=2.0.0`** added to `requirements.txt`
-- **Generic command alias system** -- define shorthand aliases for any registered
-  command in `config.yaml` under `aliases:`. Aliases inherit scope, privilege,
-  and all properties from their target. No chaining, no collision with real
-  commands. Changes take effect on `!rehash`.
-- **`.gitignore`** -- excludes `data/meshhall.db`, `data/meshhall.log`, `venv/`,
-  `__pycache__/`, `*.pyc`, and editor artifacts.
-
-### Changed
-- **`!net` subcommand dispatcher** -- all net management commands consolidated
-  under `!net <subcommand>`. Standalone shortcuts `!checkin`, `!regrets`, `!roll`
-  retained for ergonomics.
-- **`!bulletin` subcommand dispatcher** -- `!post`, `!bulletins`, `!bulletin <id>`,
-  `!delbul` replaced by `!bulletin <list|show|post|delete>`. Shortcuts `!post`
-  and `!bulletins` retained.
-- **`!freq` subcommand dispatcher** -- `!freqs`, `!freq <n>`, `!addfreq`,
-  `!delfreq` replaced by `!freq <list|show|add|delete>`. Shortcut `!freqs`
-  retained.
-- **`!channel` subcommand dispatcher** -- `!channels` (list) and `!channel`
-  (admin control) merged into `!channel <list|set|sync>`.
-- **`!replay` subcommand dispatcher** -- `!replay` and `!search` consolidated
-  into `!replay <list|search>`. Shortcut `!search` retained.
-- **`!help` index** -- aliases excluded from listing. `!help <alias>` still
-  works and notes the alias relationship.
 
 ---
 
 ## [v0.8.2] -- 2026-03-04
 
-### Removed
+### Plugin -- checkin (`plugins/02_checkin.py`, removed)
 - **`02_checkin` plugin removed** -- `!checkin`, `!status`, `!missing`, `!roll`
   and the `checkins` table are gone. The plugin is being replaced by a full
   net management system (`nets`) in the next release with support for named
   nets, recurring sessions, net control operators, guest check-ins, and more.
   No migration path -- zero active deployments.
 
-### Core
+### Core v0.8.2
 - **`!help` index no longer shows admin commands** -- admin commands (`is_admin=True`)
   are excluded from the default `!help` listing for all users. Admins see a note
   at the top of the listing directing them to `!help admin`.

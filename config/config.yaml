@@ -106,8 +106,11 @@ connection:
   dedup_window_seconds: 120
 
 # -- Logging -------------------------------------------------------------------
+# Logs go to stdout, captured by journald via StandardOutput=journal.
+# journald handles rotation automatically. View logs with:
+#   journalctl -u meshhall -f
+#   journalctl -u meshhall --since "1 hour ago"
 log_level: INFO       # DEBUG | INFO | WARNING | ERROR
-log_file: data/meshhall.log
 
 # -- Database ------------------------------------------------------------------
 db_path: data/meshhall.db

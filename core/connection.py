@@ -314,6 +314,16 @@ class ConnectionManager:
         # Enumerate channel slots from the radio and reconcile with DB
         await self.enumerate_channels()
 
+        # Register dispatcher providers now that the connection is live.
+        # Co-locating registration here means no wiring needed in meshhall.py --
+        # any plugin or the web API can call dispatcher.get_radio_contact_count()
+        # or dispatcher.get_node_info() without knowing about ConnectionManager.
+        self.dispatcher.register_contact_count_provider(self.get_radio_contact_count)
+        self.dispatcher.register_node_info_provider(self.get_node_info)
+        self.dispatcher.register_channel_by_name_provider(self._get_channel_by_name)
+        self.dispatcher.register_contacts_snapshot_provider(self._get_contacts_snapshot)
+        logger.info("Dispatcher providers registered: contact_count, node_info, channel_by_name, contacts_snapshot")
+
         # Backfill contacts on startup -- populates full_public_key, contact_type,
         # and display_name for all nodes already in the radio contact list before
         # waiting for them to advertise.
@@ -406,6 +416,8 @@ class ConnectionManager:
         new_slots = []
         changed_slots = []
         seen_slots = []
+        new_slots_idxs = []
+        changed_idxs = []
 
         for idx in range(MAX_CHANNEL_SLOTS):
             try:
@@ -445,9 +457,11 @@ class ConnectionManager:
                 await self._db.commit()
                 logger.info(f"Channel slot {idx}: new -- name={name!r} respond=off")
                 new_slots.append(f"[{idx}] {name} (new, respond=off)")
+                new_slots_idxs.append(idx)
 
             elif existing["name"] != name:
-                # Name changed -- auto-disable and warn
+                # Name changed -- auto-disable channel and any announcements targeting it
+                old_ch_name = existing["name"]
                 await self._db.execute(
                     "UPDATE _channels SET name=?, respond=0, last_seen=?, disabled_at=? "
                     "WHERE channel_idx=?",
@@ -455,13 +469,20 @@ class ConnectionManager:
                 )
                 await self._db.commit()
                 logger.warning(
-                    f"Channel slot {idx}: name changed {existing['name']!r} -> {name!r}. "
+                    f"Channel slot {idx}: name changed {old_ch_name!r} -> {name!r}. "
                     f"Respond DISABLED (was {'on' if existing['respond'] else 'off'}). "
                     f"Use '!channel {idx} on' to re-enable after verifying."
                 )
+                disabled_ann = await self._disable_announcements_for_channel(old_ch_name)
+                if disabled_ann:
+                    logger.warning(
+                        f"Announcements disabled due to channel rename "
+                        f"{old_ch_name!r}->{name!r}: {', '.join(disabled_ann)}"
+                    )
                 changed_slots.append(
                     f"[{idx}] {existing['name']!r}->{name!r} DISABLED"
                 )
+                changed_idxs.append(idx)
 
             else:
                 # Same name -- just touch last_seen
@@ -470,7 +491,29 @@ class ConnectionManager:
                     (now, idx),
                 )
                 await self._db.commit()
-                seen_slots.append(idx)
+                seen_slots.append(idx)  # already tracked for gone-slot sweep
+
+        # Sweep DB slots that were not seen in this radio scan.
+        # A missing slot may mean the radio was reconfigured -- disable any
+        # announcements that targeted the now-absent channel name.
+        all_db_slots = await self._db.fetchall(
+            "SELECT channel_idx, name FROM _channels"
+        )
+        scanned_idxs = set(new_slots_idxs) | set(changed_idxs) | set(seen_slots)
+        gone_ann_notes = []
+        for db_row in all_db_slots:
+            if db_row["channel_idx"] not in scanned_idxs:
+                gone_name = db_row["name"]
+                disabled_ann = await self._disable_announcements_for_channel(gone_name)
+                if disabled_ann:
+                    gone_ann_notes.append(
+                        f"slot {db_row['channel_idx']} ({gone_name!r}): "
+                        + ", ".join(disabled_ann)
+                    )
+                    logger.warning(
+                        f"Channel slot {db_row['channel_idx']} ({gone_name!r}) not seen "
+                        f"in radio scan -- announcements disabled: {', '.join(disabled_ann)}"
+                    )
 
         # Rebuild in-memory cache from DB
         await self._reload_channel_cache()
@@ -483,12 +526,41 @@ class ConnectionManager:
             parts.append(f"{len(changed_slots)} name-changed (disabled): {', '.join(changed_slots)}")
         if seen_slots:
             parts.append(f"{len(seen_slots)} unchanged: slots {seen_slots}")
+        if gone_ann_notes:
+            parts.append(f"announcements disabled (gone slots): {'; '.join(gone_ann_notes)}")
         if not parts:
             parts.append("No channel slots found on radio.")
 
         summary = "Channel sync: " + "; ".join(parts)
         logger.info(summary)
         return summary
+
+    async def _disable_announcements_for_channel(self, channel_name: str) -> list:
+        """
+        Set active=0 on all announcements targeting channel_name.
+        Returns a list of disabled slug names (may be empty).
+        Safe to call even if the announcements table does not exist yet
+        (e.g. announce plugin not loaded).
+        """
+        try:
+            rows = await self._db.fetchall(
+                "SELECT slug FROM announcements WHERE channel=? AND active=1",
+                (channel_name,),
+            )
+            if not rows:
+                return []
+            slugs = [r["slug"] for r in rows]
+            now = int(time.time())
+            await self._db.execute(
+                "UPDATE announcements SET active=0 WHERE channel=? AND active=1",
+                (channel_name,),
+            )
+            await self._db.commit()
+            return slugs
+        except Exception as e:
+            # announcements table may not exist if plugin is disabled -- not an error
+            logger.debug(f"_disable_announcements_for_channel({channel_name!r}): {e}")
+            return []
 
     async def _reload_channel_cache(self):
         """Rebuild self._channels from the DB. Called after any enumeration or respond change."""
@@ -577,7 +649,8 @@ class ConnectionManager:
                         old_name     = None
                         is_new = await self._db.upsert_contact(
                             pubkey_prefix, str(full_key), name, contact_type,
-                            _return_old_name=True
+                            update_advert_ts=False,
+                            _return_old_name=True,
                         )
                         if isinstance(is_new, tuple):
                             is_new, old_name = is_new
@@ -637,22 +710,31 @@ class ConnectionManager:
             if not pubkey_prefix:
                 return
 
-            # Get name and type from refreshed contacts cache
+            # Get name, type, and hop count from refreshed contacts cache + ADV payload
             contact      = self._contacts.get(pubkey_prefix, {})
             name         = _sanitise_name(
                 contact.get("adv_name") or contact.get("name") or contact.get("display_name")
             )
             contact_type = contact.get("type")
 
+            # path_len may arrive in the ADV payload itself or in the cached contact dict
+            raw_hops = None
+            if isinstance(payload, dict):
+                raw_hops = payload.get("path_len")
+            if raw_hops is None:
+                raw_hops = contact.get("path_len")
+            last_hops = int(raw_hops) if raw_hops is not None else None
+
             logger.debug(
                 f"ADV contact detail: prefix={pubkey_prefix} "
-                f"name={name!r} type={contact_type!r} "
+                f"name={name!r} type={contact_type!r} hops={last_hops!r} "
                 f"keys={list(contact.keys()) if contact else '(not in cache)'}"
             )
 
             # Upsert user record with adv data
             try:
-                await self._db.upsert_contact(pubkey_prefix, full_key, name, contact_type)
+                await self._db.upsert_contact(pubkey_prefix, full_key, name, contact_type,
+                                              last_hops=last_hops)
             except Exception as e:
                 logger.warning(f"upsert_contact failed for {pubkey_prefix}: {e}")
 
@@ -1026,6 +1108,55 @@ class ConnectionManager:
         """
         return len({k: v for k, v in self._contacts.items() if len(k) > 12})
 
+    async def get_node_info(self) -> dict:
+        """
+        Query the radio for a comprehensive snapshot of node state.
+        Fetches on-demand (never cached) so callers always get current values --
+        important since settings may change via !node set or the radio UI.
+
+        Returns a dict with keys:
+          self_info   -- send_appstart payload (radio config, name, pubkey)
+          battery     -- get_bat payload (level_mv, used_kb, total_kb)
+          telemetry   -- get_self_telemetry payload (voltage)
+          stats_core  -- get_stats_core payload (uptime_secs, errors, queue_len)
+          stats_radio -- get_stats_radio payload (noise_floor, rssi, snr, air times)
+          stats_packets -- get_stats_packets payload (recv, sent, flood/direct, errors)
+          autoadd     -- get_autoadd_config payload (config bitmask)
+          contacts    -- live contact type breakdown from self._contacts cache
+          error       -- set to an error message string if any call fails
+
+        All sub-calls are attempted independently; a failure in one does not
+        prevent the others from populating.
+        """
+        result = {}
+
+        async def _try(key, coro):
+            try:
+                evt = await coro
+                result[key] = evt.payload
+            except Exception as e:
+                result[key] = None
+                result.setdefault("errors", {})[key] = str(e)
+
+        await _try("self_info",     self._mc.commands.send_appstart())
+        await _try("battery",       self._mc.commands.get_bat())
+        await _try("telemetry",     self._mc.commands.get_self_telemetry())
+        await _try("stats_core",    self._mc.commands.get_stats_core())
+        await _try("stats_radio",   self._mc.commands.get_stats_radio())
+        await _try("stats_packets", self._mc.commands.get_stats_packets())
+        await _try("autoadd",       self._mc.commands.get_autoadd_config())
+
+        # Contact type breakdown from live cache (no serial call needed)
+        by_type = {}
+        for k, v in self._contacts.items():
+            if len(k) > 12:  # full keys only, skip prefix aliases
+                t = v.get("type")
+                key = f"type{t}" if t is not None else "type?"
+                by_type[key] = by_type.get(key, 0) + 1
+        result["contacts"] = by_type
+
+        return result
+
     async def send_advertisement(self) -> bool:
         """
         Broadcast a self-advertisement to the mesh immediately.
@@ -1129,3 +1260,31 @@ class ConnectionManager:
             if str(key).startswith(sender_id):
                 return contact
         return None
+
+    async def _get_channel_by_name(self, name: str):
+        """
+        Provider for dispatcher.get_channel_by_name().
+        Looks up a channel row from the _channels DB table by name (case-insensitive).
+        Returns a dict with {channel_idx, name, respond, disabled_at} or None.
+        """
+        try:
+            row = await self._db.fetchone(
+                "SELECT channel_idx, name, respond, disabled_at FROM _channels "
+                "WHERE lower(name)=lower(?)",
+                (name,),
+            )
+            if row is None:
+                return None
+            return dict(row)
+        except Exception as e:
+            logger.warning(f"_get_channel_by_name({name!r}) error: {e}")
+            return None
+
+    def _get_contacts_snapshot(self) -> dict:
+        """
+        Provider for dispatcher.get_contacts_snapshot().
+        Returns a shallow copy of the in-memory contacts cache.
+        Safe to call from any coroutine -- reads without locking
+        (consistent enough for display purposes; same caveat as get_radio_contact_count).
+        """
+        return dict(self._contacts)

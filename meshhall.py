@@ -74,8 +74,10 @@ async def main():
         level=getattr(logging, config.get("log_level", "INFO")),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
+            # stdout is captured by journald via StandardOutput=journal in the
+            # systemd unit. journald handles rotation automatically -- no flat
+            # file handler needed. Use: journalctl -u meshhall -f
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(config.get("log_file", "data/meshhall.log")),
         ],
     )
     logger.info(f"MeshHall v{CORE_VERSION} starting up...")
@@ -162,8 +164,9 @@ async def main():
             await db.close()
             sys.exit(42)
 
-    # Expose live radio contact count to plugins (e.g. 99_webapi) via dispatcher.
-    dispatcher.register_contact_count_provider(conn.get_radio_contact_count)
+    # Note: dispatcher providers (contact_count, node_info) are registered
+    # automatically by ConnectionManager when the radio connects -- no wiring
+    # needed here. See core/connection.py _connect().
 
     dispatcher.set_system_action_callback(system_action)
 

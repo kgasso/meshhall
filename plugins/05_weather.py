@@ -34,7 +34,7 @@ User location:
 Config: config/plugins/weather.yaml
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -364,17 +364,35 @@ def setup(dispatcher, config, db):
         Format a wx_forecast DB row into a reply string.
         stale=True adds a '[cached MM-DD HH:MMz]' note when NWS was unreachable.
         location, if provided, is shown on the header line.
+        Includes wind speed/direction and precipitation probability when present.
         """
-        periods   = json.loads(row["raw"])
-        age_note  = f" [cached {_fmt_ts(row['ts'])}]" if stale else f" ({_fmt_ts(row['ts'])})"
-        loc_note  = f" -- {location}" if location else ""
-        lines     = [f"Forecast{loc_note}{age_note}"]
+        periods  = json.loads(row["raw"])
+        age_note = f" [cached {_fmt_ts(row['ts'])}]" if stale else f" ({_fmt_ts(row['ts'])})"
+        loc_note = f" -- {location}" if location else ""
+        lines    = [f"Forecast{loc_note}{age_note}"]
         for p in periods[:n_periods]:
             name   = p.get("name", "")
             detail = p.get("shortForecast") or p.get("detailedForecast", "")
             temp   = p.get("temperature", "")
             unit   = p.get("temperatureUnit", "F")
-            lines.append(f"{name}: {temp}°{unit}, {detail[:80]}")
+
+            # Wind -- NWS returns e.g. "10 mph" in windSpeed, "SW" in windDirection
+            wind_speed = (p.get("windSpeed") or "").strip()
+            wind_dir   = (p.get("windDirection") or "").strip()
+            if wind_speed and wind_dir:
+                wind_str = f" | Wind: {wind_dir} {wind_speed}"
+            elif wind_speed:
+                wind_str = f" | Wind: {wind_speed}"
+            else:
+                wind_str = ""
+
+            # Precipitation probability -- NWS returns
+            # {"unitCode": "wmoUnit:percent", "value": 40} or null
+            precip_obj = p.get("probabilityOfPrecipitation") or {}
+            precip_val = precip_obj.get("value") if isinstance(precip_obj, dict) else None
+            precip_str = f" | Precip: {int(precip_val)}%" if precip_val is not None else ""
+
+            lines.append(f"{name}: {temp}°{unit}, {detail[:60]}{wind_str}{precip_str}")
         return "\n".join(lines)
 
     # -- Alert response builder ------------------------------------------------
