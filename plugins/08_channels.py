@@ -127,7 +127,7 @@ def setup(dispatcher, config, db):
 
     # -- Subcommand dispatcher -------------------------------------------------
 
-    from core.database import PRIV_ADMIN, PRIV_DEFAULT
+    from core.database import PRIV_ADMIN
 
     async def cmd_channel(msg, args=""):
         parts = (args or msg.arg_str).strip().split(None, 1)

@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Awaitable, Dict, List, Optional, NamedTuple
 
 from core.database import PRIV_MUTED, PRIV_DEFAULT, PRIV_ADMIN
-from core.ratelimit import ChannelRateLimiter, DmRateLimiter, RateLimitResult
+from core.ratelimit import ChannelRateLimiter, DmRateLimiter
 
 logger = logging.getLogger(__name__)
 

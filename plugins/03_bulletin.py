@@ -30,7 +30,7 @@ __license__   = "GPLv3"
 import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from core.database import PRIV_DEFAULT, PRIV_ADMIN
+from core.database import PRIV_DEFAULT
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bulletins (

@@ -7,8 +7,45 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 ## Known Enhancements / Future Work
 
 - **Lightning detection:** Blitzortung.org WebSocket feed (free, no API key)
-  or AS3935 Franklin sensor (I2C/SPI, grid-down capable) -- in planning, not yet 
-  implemented.
+  or AS3935 Franklin sensor (I2C/SPI, grid-down capable) -- not yet implemented.
+
+## [v0.9.7] -- 2026-03-31
+
+### Core v0.9.7 and various plugins
+
+- **Dead code removed** (`core/connection.py`):
+  - `_ack_contact_msg()` method deleted -- ACK is handled at the
+    firmware/transport layer in MeshCore 2.x; this no-op placeholder
+    was never called.
+  - `adv_method_name` local variable removed from the advertisement
+    probe loop -- assigned but never read; the log line already uses
+    `method_name` directly from the loop variable.
+  - Redundant second `_refresh_contacts(verbose=True)` call on startup
+    removed. The first call (before event subscriptions) already
+    populates the cache; the later "backfill" call added nothing.
+
+- **Unused imports removed**:
+  - `core/connection.py` -- `Optional` (no annotations use it)
+  - `core/dispatcher.py` -- `RateLimitResult` (rate limit results are
+    consumed via attribute access on the returned object; the type name
+    itself is never referenced in the body)
+  - `core/database.py` -- `asyncio` (aiosqlite manages its own event
+    loop integration) and `Any` (only `Optional` and `List` are used)
+  - `plugins/03_bulletin.py` -- `PRIV_ADMIN` (privilege checks use
+    the literal `2`, not the constant)
+  - `plugins/02_nets.py` -- `timedelta` (imported from datetime,
+    never called in the module)
+  - `plugins/08_channels.py` -- `PRIV_DEFAULT` from the local import
+    inside `setup()` (only `PRIV_ADMIN` is used in that scope)
+
+- **Contact count efficiency** (`core/connection.py`):
+  `get_radio_contact_count()` and `_do_prune_contacts()` both
+  allocated a full dict (`len({k: v for k, v in ... if len(k) > 12})`)
+  just to count full-length keys. Replaced with
+  `sum(1 for k in self._contacts if len(k) > 12)` -- O(n) generator,
+  no intermediate allocation.
+
+---
 
 ## [v0.9.6] -- 2026-03-31
 

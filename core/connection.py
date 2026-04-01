@@ -36,7 +36,6 @@ __license__   = "GPLv3"
 import asyncio
 import logging
 import time
-from typing import Optional
 
 from core.dispatcher import Dispatcher, Message
 
@@ -284,7 +283,6 @@ class ConnectionManager:
 
         # Probe for self-advertisement capability
         adv_method      = None
-        adv_method_name = None
         _adv_candidates = ("send_advert", "send_advertise", "advertise", "send_adv", "send_advertisement")
         _available_cmds = [m for m in dir(self._mc.commands) if not m.startswith("_")]
         logger.info(f"Bot advertisement probe -- available commands: {_available_cmds}")
@@ -296,7 +294,6 @@ class ConnectionManager:
                     adv_method = lambda: _raw(flood=True)
                 else:
                     adv_method = _raw
-                adv_method_name  = method_name
                 self._adv_method = adv_method
                 logger.info(f"Bot advertisement: will use commands.{method_name}()"
                             + (" with flood=True" if method_name == "send_advert" else ""))
@@ -323,12 +320,6 @@ class ConnectionManager:
         self.dispatcher.register_channel_by_name_provider(self._get_channel_by_name)
         self.dispatcher.register_contacts_snapshot_provider(self._get_contacts_snapshot)
         logger.info("Dispatcher providers registered: contact_count, node_info, channel_by_name, contacts_snapshot")
-
-        # Backfill contacts on startup -- populates full_public_key, contact_type,
-        # and display_name for all nodes already in the radio contact list before
-        # waiting for them to advertise.
-        logger.info("Running startup contacts backfill...")
-        await self._refresh_contacts(verbose=True)
 
         # Keep the connection alive until disconnected
         dedup_prune_interval   = 3600
@@ -790,10 +781,6 @@ class ConnectionManager:
         except Exception as e:
             logger.debug(f"Dedup prune error: {e}")
 
-    async def _ack_contact_msg(self, payload: dict):
-        """No-op placeholder -- ACK is handled at firmware/transport layer in 2.x."""
-        pass
-
     async def _on_contact_msg(self, event):
         """Handle a direct message from a contact."""
         try:
@@ -964,7 +951,7 @@ class ConnectionManager:
         contact_max    = int(self.config.get("bot.contact_max",    300))
         contact_target = int(self.config.get("bot.contact_target", 250))
 
-        total = len({k: v for k, v in self._contacts.items() if len(k) > 12})
+        total = sum(1 for k in self._contacts if len(k) > 12)
         logger.info(f"Contact prune check: {total} contacts (max={contact_max} target={contact_target})")
 
         if total < contact_max:
@@ -1106,7 +1093,7 @@ class ConnectionManager:
         by _contacts_lock, so a momentary read here is consistent enough for
         dashboard display purposes).
         """
-        return len({k: v for k, v in self._contacts.items() if len(k) > 12})
+        return sum(1 for k in self._contacts if len(k) > 12)
 
     async def get_node_info(self) -> dict:
         """

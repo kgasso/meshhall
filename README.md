@@ -1,7 +1,7 @@
 # MeshHall
 
 A modular IRC-style bot for MeshCore mesh networks.
-Runs on a Raspberry Pi connected to a RAK4631 WisBlock LoRa node via USB serial.
+Runs on a Raspberry Pi connected to a MeshCore-compatible LoRa node (e.g. RAK4631 WisBlock, NRF52840) via USB serial.
 
 ---
 
@@ -41,6 +41,7 @@ or `!help <command>` for detailed usage on any specific command.
 | `!rehash` | DM | Reload all config files without restarting (admin) |
 | `!restart` | DM | Restart the bot process -- requires `!restart confirm` (admin) |
 | `!shutdown` | DM | Shut down the bot -- requires `!shutdown confirm` (admin) |
+| `!cancel` | DM | Abort any pending confirmation (`!restart`, `!shutdown`, `!node set`) (admin) |
 
 ---
 
@@ -101,6 +102,7 @@ prints the full subcommand list.
 | `!bulletin list [n]` | DM | List last N bulletins (default 5, max 20) |
 | `!bulletin show <id>` | DM | Read a bulletin in full |
 | `!bulletin post [msg]` | DM | Post inline, or publish pending draft if no text given |
+| `!bulletin post [msg] ttl <X>` | DM | Post with expiry -- `30m`, `24h`, `7d` etc. Works with drafts too |
 | `!bulletin draft <text>` | DM | Start or append to a pending draft |
 | `!bulletin draft clear` | DM | Discard pending draft |
 | `!bulletin delete <id>` | DM | Delete a bulletin (own or any if admin) |
@@ -231,6 +233,61 @@ Admins cannot mute or change the privilege of other admins directly. Use
 
 The MOTD is delivered automatically on a user's first contact (or when the intro
 window elapses), if one is set.
+
+---
+
+### Node (`11_node`)
+
+Admin-only radio node query and configuration. `!node` without a subcommand
+prints the subcommand list.
+
+| Command | Scope | Description |
+|---|---|---|
+| `!node info` | DM | Radio identity and config (freq, BW, SF, CR, TX power, name, pubkey, AutoAdd) |
+| `!node hw` | DM | Hardware health (battery voltage, flash, firmware uptime, error/queue counts) |
+| `!node rf` | DM | RF conditions and packet stats (noise floor, RSSI, SNR, air time, counts) |
+| `!node set freq <MHz>` | DM | Set radio frequency -- requires confirm (admin) |
+| `!node set name <text>` | DM | Set node display name -- requires confirm (admin) |
+| `!node set txpower <dBm>` | DM | Set transmit power -- requires confirm (admin) |
+| `!node set autoadd <types>` | DM | Set auto-add contact type bitmask (admin) |
+
+All data fetched on-demand from the radio -- never cached. Destructive `!node set`
+operations require `!node set confirm` within 60 seconds (or `!cancel` to abort).
+
+---
+
+### Announcements (`12_announce`)
+
+Scheduled channel announcements. Admin-only create/delete; anyone can list/show.
+`!announce` without a subcommand prints the subcommand list.
+
+| Command | Scope | Description |
+|---|---|---|
+| `!announce list` | DM | List all configured announcements |
+| `!announce show <slug>` | DM | Show announcement details and next fire time |
+| `!announce create <slug> <channel> <schedule> -- <text>` | DM | Create an announcement (admin) |
+| `!announce delete <slug>` | DM | Delete an announcement (admin) |
+
+**Schedule formats:** `daily HH:MM` \| `weekly <day> HH:MM` \| `monthly <Nth> <day> HH:MM` \| `once YYYY-MM-DD HH:MM`
+
+Channel must exist in `!channel list` with `respond=on` before an announcement can be created for it.
+Announcements targeting a renamed or removed channel are automatically disabled.
+
+---
+
+### Heard (`13_heard`)
+
+Recently heard nodes, sourced from the contacts cache. DM only, privilege 1+.
+
+| Command | Scope | Description |
+|---|---|---|
+| `!heard` | DM | Last 10 nodes heard (by most recent advertisement or message) |
+| `!heard <N>` | DM | Last N nodes (max 50) |
+| `!heard <query>` | DM | Filter by partial name or pubkey prefix |
+| `!heard <N> <query>` | DM | Last N matching query |
+
+Output format: `Name (prefix) \| adv: Xm ago \| heard: Xm ago \| hops:N`
+(`adv` = last advertisement, `heard` = last inbound message; fields omitted if unknown).
 
 ---
 
@@ -457,13 +514,16 @@ plugins/
   08_channels.py             !channel * subcommands: list set sync
   09_motd.py                 !motd  !setmotd  !clearmotd
   10_stats.py                !stats
-  11_node.py                 !node * subcommands: info hw rf
+  11_node.py                 !node * subcommands: info hw rf set
+  12_announce.py             !announce * subcommands: list show create delete
+  13_heard.py                !heard
   _template.py               Copy this to create new plugins
 config/
   config.yaml                Main settings (connection, bot identity, timezone, logging)
   plugins/
     bulletin.yaml            Bulletin plugin tuning
     frequencies.yaml         Frequency plugin tuning and seed data
+    announce.yaml            Announce plugin settings
     nets.yaml                Nets plugin scope/privilege settings
     replay.yaml              Replay plugin tuning
     time.yaml                Time plugin tuning
@@ -473,7 +533,6 @@ deploy/
   meshhall.service           systemd unit
 data/                        Created at runtime (owned by meshhall user)
   meshhall.db                SQLite database (WAL mode)
-  meshhall.log               Log file
   zip_code_database.csv      ZIP centroid data for !wx / !wxalert (operator-provided)
 tools/
   backup_db.sh               Safe hot-backup of meshhall.db while the bot is live

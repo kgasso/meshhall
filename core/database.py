@@ -11,12 +11,11 @@ __email__     = "kameron@gasso.org"
 __copyright__ = "Copyright 2026, Kameron Gasso"
 __license__   = "GPLv3"
 
-import asyncio
 import logging
 import time
 import aiosqlite
 from pathlib import Path
-from typing import Optional, List, Any
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
