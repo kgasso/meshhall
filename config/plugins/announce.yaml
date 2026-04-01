@@ -1,0 +1,10 @@
+# config/plugins/announce.yaml
+
+# -- Command privileges --------------------------------------------------------
+privileges:
+  announce: 1       # floor: 1 -- anyone can list/show announcements
+
+# -- Command scope -------------------------------------------------------------
+# Valid values (widest -> narrowest): channel, direct, disabled
+scopes:
+  announce: direct  # default: direct [locked -- admin management, DM only]

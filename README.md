@@ -457,6 +457,7 @@ plugins/
   08_channels.py             !channel * subcommands: list set sync
   09_motd.py                 !motd  !setmotd  !clearmotd
   10_stats.py                !stats
+  11_node.py                 !node * subcommands: info hw rf
   _template.py               Copy this to create new plugins
 config/
   config.yaml                Main settings (connection, bot identity, timezone, logging)
@@ -474,6 +475,12 @@ data/                        Created at runtime (owned by meshhall user)
   meshhall.db                SQLite database (WAL mode)
   meshhall.log               Log file
   zip_code_database.csv      ZIP centroid data for !wx / !wxalert (operator-provided)
+tools/
+  backup_db.sh               Safe hot-backup of meshhall.db while the bot is live
+  BACKUPS.md                 Backup strategy and restore documentation
+docs/
+  PRIVACY_POLICY.md          Privacy policy for MeshHall deployments
+  images/                    Screenshots and configuration guides
 ```
 
 > **NOAA SAME/EAS offline alerts** -- the RTL-SDR decoder has been moved to a

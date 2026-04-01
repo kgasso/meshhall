@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS users (
     notes            TEXT,
     full_public_key  TEXT,
     last_advert_ts   INTEGER,
-    contact_type     INTEGER
+    contact_type     INTEGER,
+    last_hops        INTEGER,
+    last_dm_ts       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_users_name ON users(display_name);
 """
@@ -70,6 +72,10 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN full_public_key TEXT",
     "ALTER TABLE users ADD COLUMN last_advert_ts INTEGER",
     "ALTER TABLE users ADD COLUMN contact_type INTEGER",
+    "ALTER TABLE users ADD COLUMN last_hops INTEGER",
+    # announce plugin -- added channel_idx to store resolved slot index
+    "ALTER TABLE announcements ADD COLUMN channel_idx INTEGER",
+    "ALTER TABLE users ADD COLUMN last_dm_ts INTEGER",
 ]
 
 
@@ -163,10 +169,17 @@ class Database:
     async def upsert_contact(self, pubkey_prefix: str, full_public_key: str,
                              display_name: Optional[str] = None,
                              contact_type: Optional[int] = None,
+                             last_hops: Optional[int] = None,
+                             update_advert_ts: bool = True,
                              _return_old_name: bool = False):
         """
         Upsert a user record from an advertisement event or contacts refresh.
-        Stores full_public_key, last_advert_ts, and contact_type.
+        Stores full_public_key, contact_type, and last_hops.
+
+        update_advert_ts -- set True (default) only for direct ADV events for
+          this specific node. Set False for bulk _refresh_contacts sweeps so
+          that last_advert_ts reflects the actual last advertisement time
+          rather than the time of any periodic cache refresh.
 
         Returns:
           - True if new user, False if existing  (default)
@@ -177,37 +190,42 @@ class Database:
         existing = await self.get_user(pubkey_prefix)
 
         if existing is None:
+            advert_ts_val = now if update_advert_ts else None
             await self.execute(
                 """INSERT INTO users
                    (pubkey_prefix, full_public_key, display_name, name_updated_ts,
-                    first_seen_ts, last_seen_ts, last_advert_ts, contact_type, privilege)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                    first_seen_ts, last_seen_ts, last_advert_ts, contact_type,
+                    last_hops, privilege)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (pubkey_prefix, full_public_key,
                  display_name, now if display_name else None,
-                 now, now, now, contact_type, PRIV_DEFAULT),
+                 now, now, advert_ts_val, contact_type, last_hops, PRIV_DEFAULT),
             )
             await self.commit()
             logger.info(
                 f"New user from ADV: {pubkey_prefix}"
                 + (f" name={display_name!r}" if display_name else "")
                 + (f" type={contact_type}" if contact_type is not None else "")
+                + (f" hops={last_hops}" if last_hops is not None else "")
             )
             return (True, None) if _return_old_name else True
 
-        # Update adv fields -- always refresh full_public_key, last_advert_ts, contact_type
-        old_name     = existing["display_name"]
-        new_name     = display_name if display_name else old_name
-        name_changed = bool(display_name and display_name != old_name)
-        name_ts      = now if name_changed else existing["name_updated_ts"]
-        # Only overwrite contact_type if we have a value -- don't clobber with None
-        new_type     = contact_type if contact_type is not None else existing["contact_type"]
+        # Update contact fields -- only stamp last_advert_ts for direct ADV events
+        old_name      = existing["display_name"]
+        new_name      = display_name if display_name else old_name
+        name_changed  = bool(display_name and display_name != old_name)
+        name_ts       = now if name_changed else existing["name_updated_ts"]
+        # Only overwrite contact_type / last_hops / last_advert_ts if we have a value
+        new_type      = contact_type if contact_type is not None else existing["contact_type"]
+        new_hops      = last_hops if last_hops is not None else existing["last_hops"]
+        new_advert_ts = now if update_advert_ts else existing["last_advert_ts"]
 
         await self.execute(
             """UPDATE users SET
                full_public_key=?, last_advert_ts=?, contact_type=?,
-               display_name=?, name_updated_ts=?
+               last_hops=?, display_name=?, name_updated_ts=?
                WHERE pubkey_prefix=?""",
-            (full_public_key, now, new_type, new_name, name_ts, pubkey_prefix),
+            (full_public_key, new_advert_ts, new_type, new_hops, new_name, name_ts, pubkey_prefix),
         )
         await self.commit()
 
@@ -229,6 +247,7 @@ class Database:
 
     async def upsert_user(self, pubkey_prefix: str,
                           display_name: Optional[str] = None,
+                          is_dm: bool = False,
                           _skip_window: int = 60) -> tuple:
         """
         Get-or-create a user record.
@@ -241,6 +260,9 @@ class Database:
         it was updated within the last _skip_window seconds -- reduces DB
         churn on busy nets without losing accuracy.
         Never downgrades privilege -- only explicit !setpriv can change it.
+
+        is_dm -- when True, also stamps last_dm_ts so !heard can show the
+          most recent direct message separately from advertisement time.
         """
         now = int(time.time())
         existing = await self.get_user(pubkey_prefix)
@@ -249,10 +271,10 @@ class Database:
             await self.execute(
                 """INSERT INTO users
                    (pubkey_prefix, display_name, name_updated_ts,
-                    first_seen_ts, last_seen_ts, privilege)
-                   VALUES (?,?,?,?,?,?)""",
+                    first_seen_ts, last_seen_ts, last_dm_ts, privilege)
+                   VALUES (?,?,?,?,?,?,?)""",
                 (pubkey_prefix, display_name, now if display_name else None,
-                 now, now, PRIV_DEFAULT),
+                 now, now, now if is_dm else None, PRIV_DEFAULT),
             )
             await self.commit()
             logger.info(
@@ -266,18 +288,19 @@ class Database:
         new_name     = display_name if display_name else old_name
         name_changed = bool(display_name and display_name != old_name)
 
-        # Skip write if name hasn't changed and last_seen was updated recently
-        if not name_changed:
+        # Skip write if name hasn't changed, not a DM, and last_seen updated recently
+        if not name_changed and not is_dm:
             age = now - (existing["last_seen_ts"] or 0)
             if age < _skip_window:
                 return (existing["privilege"], old_name)
 
-        name_ts = now if name_changed else existing["name_updated_ts"]
+        name_ts      = now if name_changed else existing["name_updated_ts"]
+        new_dm_ts    = now if is_dm else existing["last_dm_ts"]
         await self.execute(
             """UPDATE users SET
-               last_seen_ts=?, display_name=?, name_updated_ts=?
+               last_seen_ts=?, last_dm_ts=?, display_name=?, name_updated_ts=?
                WHERE pubkey_prefix=?""",
-            (now, new_name, name_ts, pubkey_prefix),
+            (now, new_dm_ts, new_name, name_ts, pubkey_prefix),
         )
         await self.commit()
 
@@ -330,6 +353,17 @@ class Database:
         )
         await self.commit()
         return result.rowcount > 0
+
+
+    async def update_last_hops(self, pubkey_prefix: str, hops: int) -> None:
+        """Update last_hops for a known user. No-op if user not found."""
+        if pubkey_prefix == "unknown":
+            return
+        await self.execute(
+            "UPDATE users SET last_hops=? WHERE pubkey_prefix=?",
+            (hops, pubkey_prefix),
+        )
+        await self.commit()
 
     async def find_user(self, query: str) -> Optional[aiosqlite.Row]:
         """

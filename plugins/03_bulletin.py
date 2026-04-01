@@ -6,15 +6,21 @@ Commands:
   !bulletins [n]          -- Shortcut for !bulletin list
 
 Subcommands:
-  !bulletin list [n]      -- List last N bulletins (default 5)
-  !bulletin show <id>     -- Read a specific bulletin
-  !bulletin post [msg]    -- Post inline or finalize pending draft
-  !bulletin draft <text>  -- Start or append to a pending draft
-  !bulletin draft clear   -- Discard pending draft
-  !bulletin delete <id>   -- Delete a bulletin (own or any if admin)
+  !bulletin list [n]           -- List last N bulletins (default 5)
+  !bulletin show <id>          -- Read a specific bulletin
+  !bulletin post [msg]         -- Post inline or finalize pending draft
+  !bulletin post [msg] ttl <X> -- Post with expiry: minutes (m), hours (h), or days (d), e.g. ttl 30m, ttl 24h
+  !bulletin draft <text>       -- Start or append to a pending draft
+  !bulletin draft clear        -- Discard pending draft
+  !bulletin delete <id>        -- Delete a bulletin (own or any if admin)
+
+Expiry:
+  Bulletins posted with a TTL are hidden from list/show once expired and
+  soft-deleted on first access after expiry. No background task required.
+  Examples: ttl 30m (30 minutes), ttl 24h (24 hours), ttl 7d (7 days).
 """
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
@@ -33,7 +39,8 @@ CREATE TABLE IF NOT EXISTS bulletins (
     sender_id   TEXT NOT NULL,
     sender_name TEXT,
     content     TEXT NOT NULL,
-    deleted     INTEGER NOT NULL DEFAULT 0
+    deleted     INTEGER NOT NULL DEFAULT 0,
+    expires_ts  INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bulletin_drafts (
@@ -43,13 +50,15 @@ CREATE TABLE IF NOT EXISTS bulletin_drafts (
 );
 """
 
+# Migration -- adds expires_ts to existing deployments (idempotent)
+_MIGRATION = "ALTER TABLE bulletins ADD COLUMN expires_ts INTEGER"
+
 
 def _fmt_ts(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%Mz")
 
 
 def _fmt_ts_dual(ts: int, local_tz_str: str) -> str:
-    """Return timestamp as 'MM-DD HH:MMz (HH:MM local)' using the bot timezone."""
     utc_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%m-%d %H:%Mz")
     try:
         tz  = ZoneInfo(local_tz_str)
@@ -60,17 +69,66 @@ def _fmt_ts_dual(ts: int, local_tz_str: str) -> str:
 
 
 def _fmt_sender(row):
-    """Return 'Name (id)' or just 'id' if no name stored."""
     name = row["sender_name"]
     pk   = row["sender_id"]
     return f"{name} ({pk})" if name else pk
 
 
+def _parse_ttl(ttl_str: str):
+    """
+    Parse a TTL string -> (seconds, label).
+    Supported suffixes:
+      m  -- minutes, e.g. 30m
+      h  -- hours,   e.g. 24h
+      d  -- days,    e.g. 7d
+    Raises ValueError with a helpful message on bad input.
+    """
+    s = ttl_str.strip().lower()
+    if s.endswith("m"):
+        try:
+            n = int(s[:-1])
+            if n < 1: raise ValueError
+            return n * 60, f"{n}m"
+        except ValueError:
+            raise ValueError("TTL minutes must be a positive integer, e.g. 30m")
+    elif s.endswith("h"):
+        try:
+            n = int(s[:-1])
+            if n < 1: raise ValueError
+            return n * 3600, f"{n}h"
+        except ValueError:
+            raise ValueError("TTL hours must be a positive integer, e.g. 24h")
+    elif s.endswith("d"):
+        try:
+            n = int(s[:-1])
+            if n < 1: raise ValueError
+            return n * 86400, f"{n}d"
+        except ValueError:
+            raise ValueError("TTL days must be a positive integer, e.g. 7d")
+    else:
+        raise ValueError("TTL must end with m (minutes), h (hours), or d (days), e.g. 30m, 24h, 7d")
+
+
 def setup(dispatcher, config, db):
     db.register_schema(SCHEMA)
 
+    # Run migration on first message -- idempotent
+    async def _startup_listener(msg):
+        if not _startup_listener._done:
+            _startup_listener._done = True
+            try:
+                await db.execute(_MIGRATION)
+                await db.commit()
+            except Exception:
+                pass  # column already exists
+    _startup_listener._done = False
+    dispatcher.register_listener(_startup_listener)
+
     def _local_tz() -> str:
         return config.get("bot.timezone", "UTC")
+
+    def _now() -> int:
+        return int(time.time())
 
     # -- Handlers --------------------------------------------------------------
 
@@ -79,10 +137,13 @@ def setup(dispatcher, config, db):
             n = min(int(args.strip()), 20) if args.strip() else 5
         except ValueError:
             n = 5
+        now  = _now()
         rows = await db.fetchall(
-            "SELECT id, ts, sender_name, sender_id, content "
-            "FROM bulletins WHERE deleted=0 ORDER BY ts DESC LIMIT ?",
-            (n,),
+            """SELECT id, ts, sender_name, sender_id, content, expires_ts
+               FROM bulletins
+               WHERE deleted=0 AND (expires_ts IS NULL OR expires_ts > ?)
+               ORDER BY ts DESC LIMIT ?""",
+            (now, n),
         )
         if not rows:
             return "No bulletins posted yet."
@@ -90,8 +151,9 @@ def setup(dispatcher, config, db):
         lines = [f"Last {len(rows)} bulletin(s):"]
         for r in rows:
             sender  = _fmt_sender(r)
-            preview = r["content"][:60] + ("…" if len(r["content"]) > 60 else "")
-            lines.append(f"#{r['id']} [{_fmt_ts(r['ts'])}] {sender}: {preview}")
+            preview = r["content"][:60] + ("..." if len(r["content"]) > 60 else "")
+            exp     = f" [exp {_fmt_ts(r['expires_ts'])}]" if r["expires_ts"] else ""
+            lines.append(f"#{r['id']} [{_fmt_ts(r['ts'])}]{exp} {sender}: {preview}")
         lines.append(f"Use {cc}bulletin show <id> to read full text.")
         return "\n".join(lines)
 
@@ -100,47 +162,78 @@ def setup(dispatcher, config, db):
             bul_id = int(args.strip())
         except (ValueError, TypeError):
             return "Usage: !bulletin show <id>"
+        now = _now()
         row = await db.fetchone(
             "SELECT * FROM bulletins WHERE id=? AND deleted=0", (bul_id,)
         )
         if not row:
             return f"Bulletin #{bul_id} not found."
+        if row["expires_ts"] and now > row["expires_ts"]:
+            await db.execute("UPDATE bulletins SET deleted=1 WHERE id=?", (bul_id,))
+            await db.commit()
+            return f"Bulletin #{bul_id} has expired."
+        exp_note = f"\nExpires: {_fmt_ts(row['expires_ts'])}" if row["expires_ts"] else ""
         return (
             f"Bulletin #{row['id']} [{_fmt_ts_dual(row['ts'], _local_tz())}]\n"
-            f"From: {_fmt_sender(row)}\n"
+            f"From: {_fmt_sender(row)}"
+            f"{exp_note}\n"
             f"{row['content']}"
         )
 
     async def do_post(msg, args=""):
-        content = args.strip()
+        raw     = args.strip()
         pcfg    = config.plugin("bulletin")
         max_len = pcfg.get("max_length", 2000)
 
-        # No inline content -- check for pending draft
-        if not content:
+        # Parse optional trailing "ttl <value>" unconditionally -- before deciding
+        # whether to use inline content or a pending draft.  Splitting on the LAST
+        # occurrence of "ttl" lets the word appear freely in the message body.
+        expires_ts  = None
+        ttl_label   = None
+        inline_text = raw
+        if raw:
+            parts = raw.rsplit("ttl", 1)
+            if len(parts) == 2 and parts[1].strip():
+                try:
+                    ttl_secs, ttl_label = _parse_ttl(parts[1].strip())
+                    expires_ts  = _now() + ttl_secs
+                    inline_text = parts[0].strip()
+                except ValueError as e:
+                    return (
+                        f"TTL error: {e}\n"
+                        f"Usage: !bulletin post <text> ttl <30m|24h|7d>"
+                    )
+
+        # Decide content source: inline text takes priority; fall back to draft
+        if inline_text:
+            if len(inline_text) > max_len:
+                return f"Bulletin too long (max {max_len} chars). Use !bulletin draft to build it up."
+            content = inline_text
+            source  = "inline"
+        else:
             draft = await db.fetchone(
                 "SELECT content FROM bulletin_drafts WHERE pubkey_prefix=?",
                 (msg.sender_id,),
             )
             if not draft:
-                return "No draft pending and no message provided. Use !bulletin post <text> or !bulletin draft <text> first."
+                return (
+                    "No draft pending and no message provided. "
+                    "Use !bulletin post <text> or !bulletin draft <text> first."
+                )
             content = draft["content"]
             await db.execute(
                 "DELETE FROM bulletin_drafts WHERE pubkey_prefix=?",
                 (msg.sender_id,),
             )
             source = "draft"
-        else:
-            if len(content) > max_len:
-                return f"Bulletin too long (max {max_len} chars). Use !bulletin draft to build it up."
-            source = "inline"
 
         cur = await db.execute(
-            "INSERT INTO bulletins (ts, sender_id, sender_name, content) VALUES (?,?,?,?)",
-            (int(time.time()), msg.sender_id, msg.sender_name, content),
+            "INSERT INTO bulletins (ts, sender_id, sender_name, content, expires_ts) VALUES (?,?,?,?,?)",
+            (_now(), msg.sender_id, msg.sender_name, content, expires_ts),
         )
         await db.commit()
-        return f"Bulletin #{cur.lastrowid} posted ({source}, {len(content)} chars)."
+        exp_note = f", expires in {ttl_label}" if ttl_label else ""
+        return f"Bulletin #{cur.lastrowid} posted ({source}, {len(content)} chars{exp_note})."
 
     async def do_draft(msg, args=""):
         text    = args.strip()
@@ -149,7 +242,6 @@ def setup(dispatcher, config, db):
         max_len = pcfg.get("max_length", 2000)
 
         if not text:
-            # Show current draft status
             draft = await db.fetchone(
                 "SELECT content, updated_ts FROM bulletin_drafts WHERE pubkey_prefix=?",
                 (msg.sender_id,),
@@ -159,8 +251,9 @@ def setup(dispatcher, config, db):
             return (
                 f"Draft in progress ({len(draft['content'])} chars, "
                 f"last updated {_fmt_ts(draft['updated_ts'])}):\n"
-                f"{draft['content'][:120]}{'…' if len(draft['content']) > 120 else ''}\n"
-                f"Use {cc}bulletin post to publish or {cc}bulletin draft clear to discard."
+                f"{draft['content'][:120]}{'...' if len(draft['content']) > 120 else ''}\n"
+                f"Use {cc}bulletin post to publish or {cc}bulletin draft clear to discard.\n"
+                f"To post with expiry: {cc}bulletin post ttl 30m|24h|7d"
             )
 
         if text.lower() == "clear":
@@ -171,15 +264,11 @@ def setup(dispatcher, config, db):
             await db.commit()
             return "Draft discarded."
 
-        # Append to existing draft or start new one
-        existing = await db.fetchone(
+        existing    = await db.fetchone(
             "SELECT content FROM bulletin_drafts WHERE pubkey_prefix=?",
             (msg.sender_id,),
         )
-        if existing:
-            new_content = existing["content"] + " " + text
-        else:
-            new_content = text
+        new_content = (existing["content"] + " " + text) if existing else text
 
         if len(new_content) > max_len:
             return (
@@ -192,7 +281,7 @@ def setup(dispatcher, config, db):
             """INSERT INTO bulletin_drafts (pubkey_prefix, content, updated_ts)
                VALUES (?,?,?)
                ON CONFLICT(pubkey_prefix) DO UPDATE SET content=excluded.content, updated_ts=excluded.updated_ts""",
-            (msg.sender_id, new_content, int(time.time())),
+            (msg.sender_id, new_content, _now()),
         )
         await db.commit()
         return (
@@ -242,16 +331,17 @@ def setup(dispatcher, config, db):
             privilege = await db.get_privilege(msg.sender_id)
             lines = [
                 f"Bulletin commands:",
-                f"  {cc}bulletin list [n]        -- list recent bulletins",
-                f"  {cc}bulletin show <id>       -- read a bulletin",
-                f"  {cc}bulletins [n]            -- shortcut for list",
+                f"  {cc}bulletin list [n]             -- list recent bulletins",
+                f"  {cc}bulletin show <id>            -- read a bulletin",
+                f"  {cc}bulletins [n]                 -- shortcut for list",
             ]
             if privilege >= 2:
                 lines += [
-                    f"  {cc}bulletin post [msg]      -- post inline or finalize draft (shortcut: {cc}post)",
-                    f"  {cc}bulletin draft <text>    -- start or append to a draft",
-                    f"  {cc}bulletin draft clear     -- discard draft",
-                    f"  {cc}bulletin delete <id>     -- delete a bulletin",
+                    f"  {cc}bulletin post [msg]           -- post inline or finalize draft",
+                    f"  {cc}bulletin post [msg] ttl <X>   -- post with expiry (e.g. ttl 30m, ttl 24h, ttl 7d)",
+                    f"  {cc}bulletin draft <text>         -- start or append to a draft",
+                    f"  {cc}bulletin draft clear          -- discard draft",
+                    f"  {cc}bulletin delete <id>          -- delete a bulletin",
                 ]
             return "\n".join(lines)
 
@@ -260,7 +350,6 @@ def setup(dispatcher, config, db):
             cc = dispatcher.command_char
             return f"Unknown subcommand '{sub}'. Use {cc}bulletin for the list."
 
-        # post and draft require priv 2+
         if sub in ("post", "draft"):
             privilege = await db.get_privilege(msg.sender_id)
             if privilege < 2:
@@ -272,7 +361,10 @@ def setup(dispatcher, config, db):
     dispatcher.register_command(
         "!bulletin", cmd_bulletin,
         help_text="Bulletin board -- post, list, read, draft, and delete bulletins",
-        usage_text="!bulletin <list|show|post|draft|delete> [args]",
+        usage_text=(
+            "!bulletin <list|show|post|draft|delete> [args]\n"
+            "!bulletin post <text> ttl <30m|24h|7d>  -- post with expiry"
+        ),
         scope="direct", priv_floor=PRIV_DEFAULT,
         category="bulletin", plugin_name="bulletin", allow_channel=True,
     )

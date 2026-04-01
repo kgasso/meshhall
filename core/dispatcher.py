@@ -154,9 +154,10 @@ class Dispatcher:
         self._reply_queue: asyncio.Queue = asyncio.Queue()
         self._rate_limiter    = ChannelRateLimiter(config)
         self._dm_rate_limiter = DmRateLimiter(config)
-        # Pending confirmation state for disruptive admin commands (!restart, !shutdown).
-        # Keyed by sender_id. Entries expire after CONFIRM_TTL_SECONDS.
-        # { sender_id: {"action": "restart"|"shutdown", "expires": float} }
+        # Pending confirmation state for disruptive admin commands (!restart, !shutdown,
+        # !node set <field>). Keyed by sender_id. Entries expire after CONFIRM_TTL seconds.
+        # { sender_id: {"action": str, "expires": float, ...extra keys per command} }
+        # Use !cancel to abort a pending confirmation without executing the action.
         self._pending_confirm: Dict[str, dict] = {}
         # Bot start time -- used by !stats for uptime reporting.
         self.started_at: float = time.time()
@@ -397,10 +398,12 @@ class Dispatcher:
                 "action":  action,
                 "expires": time.time() + CONFIRM_TTL,
             }
-            logger.warning(f"ADMIN: !{action} requested by {who} -- awaiting confirmation")
+            self.log_admin_attempt(f"!{action}", msg, granted=False,
+                                   reason="awaiting confirmation")
             return (
                 f"This is disruptive and may require server access to reconcile. "
                 f"To proceed, send {cc}{action} confirm\n"
+                f"To cancel, send {cc}cancel\n"
                 f"(confirmation expires in {CONFIRM_TTL}s)"
             )
 
@@ -413,7 +416,7 @@ class Dispatcher:
         self.register_command(
             "!restart", cmd_restart,
             help_text="Restart the bot process -- requires confirmation",
-            usage_text="!restart  |  !restart confirm",
+            usage_text="!restart  |  !restart confirm  |  !cancel",
             scope="direct",
             priv_floor=PRIV_ADMIN,
             is_admin=True,
@@ -423,7 +426,30 @@ class Dispatcher:
         self.register_command(
             "!shutdown", cmd_shutdown,
             help_text="Shut down the bot -- requires confirmation",
-            usage_text="!shutdown  |  !shutdown confirm",
+            usage_text="!shutdown  |  !shutdown confirm  |  !cancel",
+            scope="direct",
+            priv_floor=PRIV_ADMIN,
+            is_admin=True,
+            category=_CAT_CORE,
+        )
+
+        # -- !cancel -- abort any pending confirmation for this sender ----------
+
+        async def cmd_cancel(msg):
+            who     = await db.format_user(msg.sender_id, msg.sender_name)
+            pending = self._pending_confirm.get(msg.sender_id)
+            if not pending:
+                return "No pending confirmation to cancel."
+            action = pending.get("action", "unknown")
+            del self._pending_confirm[msg.sender_id]
+            self.log_admin_attempt("!cancel", msg, granted=True,
+                                   reason=f"cancelled pending !{action}")
+            return f"Cancelled pending !{action}."
+
+        self.register_command(
+            "!cancel", cmd_cancel,
+            help_text="Cancel a pending confirmation (!restart, !shutdown, !node set)",
+            usage_text="!cancel",
             scope="direct",
             priv_floor=PRIV_ADMIN,
             is_admin=True,
@@ -537,6 +563,64 @@ class Dispatcher:
         """
         fn = getattr(self, "_contact_count_provider", None)
         return fn() if fn else -1
+
+    def register_node_info_provider(self, fn):
+        """
+        Register an async callable that returns a node info dict.
+        Called from meshhall.py after ConnectionManager is created.
+        Signature: async def fn() -> dict
+        The provider fetches on-demand from the radio -- never cached.
+        """
+        self._node_info_provider = fn
+
+    async def get_node_info(self) -> dict:
+        """
+        Return live node info via the registered provider.
+        Returns an empty dict with an error key if not yet registered.
+        """
+        fn = getattr(self, "_node_info_provider", None)
+        if fn is None:
+            return {"errors": {"provider": "node_info provider not registered"}}
+        return await fn()
+
+    def register_channel_by_name_provider(self, fn):
+        """
+        Register a callable that looks up a channel row by name.
+        Signature: async def fn(name: str) -> Optional[dict]
+        Returns a dict with keys {channel_idx, name, respond, disabled_at}
+        or None if no channel with that name exists in _channels.
+        Called from connection.py after channel enumeration is live.
+        """
+        self._channel_by_name_provider = fn
+
+    async def get_channel_by_name(self, name: str):
+        """
+        Return a channel row dict for the given channel name, or None.
+        Returns None if the provider is not yet registered.
+        """
+        fn = getattr(self, "_channel_by_name_provider", None)
+        if fn is None:
+            return None
+        return await fn(name)
+
+    def register_contacts_snapshot_provider(self, fn):
+        """
+        Register a callable that returns a shallow copy of the in-memory
+        contacts cache.
+        Signature: def fn() -> dict
+        Keys are pubkey_prefix (12-char) and full public_key strings;
+        values are contact dicts from the radio (may include path_len,
+        adv_name, type, etc.).
+        """
+        self._contacts_snapshot_provider = fn
+
+    def get_contacts_snapshot(self) -> dict:
+        """
+        Return a snapshot of the live contacts cache.
+        Returns an empty dict if the provider is not yet registered.
+        """
+        fn = getattr(self, "_contacts_snapshot_provider", None)
+        return fn() if fn else {}
 
     def register_listener(self, handler: HandlerFn):
         self._listeners.append(handler)
@@ -659,10 +743,18 @@ class Dispatcher:
         if msg.sender_id == "unknown":
             privilege = PRIV_DEFAULT
         else:
-            privilege, db_name = await self.db.upsert_user(msg.sender_id, msg.sender_name)
+            privilege, db_name = await self.db.upsert_user(msg.sender_id, msg.sender_name,
+                                                              is_dm=msg.is_dm)
             # Backfill sender_name from DB if the message didn't carry one
             if not msg.sender_name and db_name:
                 msg.sender_name = db_name
+            # Persist hop count from inbound messages (ADV path also handled in connection.py)
+            hops = msg.path_len
+            if hops is not None:
+                try:
+                    await self.db.update_last_hops(msg.sender_id, hops)
+                except Exception as _e:
+                    logger.debug(f"update_last_hops failed for {msg.sender_id}: {_e}")
 
         # 2. Muted -- silent drop (not applicable to unknown, but kept for clarity)
         if privilege == PRIV_MUTED:
@@ -794,7 +886,10 @@ class Dispatcher:
 
         # 9. Execute
         if entry.is_admin:
-            logger.warning(f"ADMIN CMD: {cmd_display} by {who} via {source}")
+            logger.warning(
+                f"ADMIN CMD: {cmd_display} by {who} via {source}"
+                + (f" | {msg.content!r}" if msg.content else "")
+            )
         else:
             logger.info(
                 f"CMD: {cmd_display} by {who} via {source} priv={privilege}/{effective_priv}"
