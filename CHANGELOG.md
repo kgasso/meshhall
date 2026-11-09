@@ -9,6 +9,35 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
 - **Lightning detection:** Blitzortung.org WebSocket feed (free, no API key)
   or AS3935 Franklin sensor (I2C/SPI, grid-down capable) -- not yet implemented.
 
+## [Unreleased]
+
+### Bug fixes
+
+- **`last_hops` no longer stores the 255 sentinel** (`core/database.py`,
+  `core/connection.py`, `plugins/13_heard.py`):
+  The firmware reports `path_len=255` for "direct or unknown route". It is
+  not a hop count, but the 0.9.6 `last_hops` code stored it as one, so
+  `!heard` could show `hops:255`, and a stored 255 also blocked the
+  fallback to the live contacts cache.
+  - New `normalize_hops()` helper in `core/database.py` turns 255 (and
+    missing, non-numeric or negative values) into `None`. It is used by
+    `update_last_hops()`, `upsert_contact()` and the ADV handler.
+  - `update_last_hops()` now skips the write entirely for 255/None. The
+    last real hop count is kept, and direct messages no longer cost a
+    database commit.
+  - `!heard` applies the same rule to the DB value and to the live
+    contacts cache. Nodes with no real hop count show no `hops:` field.
+  - One-time cleanup: an idempotent `UPDATE users SET last_hops = NULL
+    WHERE last_hops = 255` added to `_MIGRATIONS` clears rows stored by
+    earlier versions. It runs on startup and is harmless to re-run.
+  - Behavior change: `!heard` output no longer includes `hops:255`.
+  - Versions: `plugins/13_heard.py` 0.2.0 -> 0.2.1 (bugfix). Core version
+    is unchanged until release packaging.
+  - Cross-repo: only `users.last_hops` changes, not the alert tables
+    (such as `wx_alerts`) that meshhall-same writes to.
+
+---
+
 ## [v0.9.7] -- 2026-03-31
 
 ### Core v0.9.7 and various plugins

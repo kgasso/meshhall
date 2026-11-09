@@ -24,6 +24,27 @@ PRIV_MUTED   = 0   # silently ignored
 PRIV_DEFAULT = 1   # read-only, auto-assigned on first contact
 PRIV_ADMIN   = 15  # full access
 
+# Firmware reports path_len=255 for "direct or unknown route". It is not a
+# real hop count, so it is never stored in users.last_hops.
+HOPS_UNKNOWN = 255
+
+
+def normalize_hops(value) -> Optional[int]:
+    """
+    Return a real hop count as int, or None if the value is missing,
+    unparseable, negative, or the 255 "direct/unknown" sentinel.
+    """
+    if value is None:
+        return None
+    try:
+        hops = int(value)
+    except (TypeError, ValueError):
+        return None
+    if hops < 0 or hops == HOPS_UNKNOWN:
+        return None
+    return hops
+
+
 CORE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +96,9 @@ _MIGRATIONS = [
     # announce plugin -- added channel_idx to store resolved slot index
     "ALTER TABLE announcements ADD COLUMN channel_idx INTEGER",
     "ALTER TABLE users ADD COLUMN last_dm_ts INTEGER",
+    # Data fix (idempotent): clear the 255 "direct/unknown" sentinel that
+    # older versions stored as if it were a hop count.
+    "UPDATE users SET last_hops = NULL WHERE last_hops = 255",
 ]
 
 
@@ -186,6 +210,7 @@ class Database:
             (avoids a second SELECT for callers that need change detection)
         """
         now      = int(time.time())
+        last_hops = normalize_hops(last_hops)   # 255 sentinel -> None
         existing = await self.get_user(pubkey_prefix)
 
         if existing is None:
@@ -355,8 +380,14 @@ class Database:
 
 
     async def update_last_hops(self, pubkey_prefix: str, hops: int) -> None:
-        """Update last_hops for a known user. No-op if user not found."""
-        if pubkey_prefix == "unknown":
+        """
+        Update last_hops for a known user. No-op if user not found.
+
+        A missing or 255 ("direct/unknown") value is ignored: the last real
+        hop count is kept, and no database write or commit is made.
+        """
+        hops = normalize_hops(hops)
+        if pubkey_prefix == "unknown" or hops is None:
             return
         await self.execute(
             "UPDATE users SET last_hops=? WHERE pubkey_prefix=?",
