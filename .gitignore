@@ -1,0 +1,55 @@
+# MeshHall -- .gitignore
+#
+# Runtime data holds other people's node IDs, names, message history and
+# saved home ZIP codes. Never commit any of it.
+
+# -- Runtime data --------------------------------------------------------------
+data/meshhall.db
+data/meshhall.db-wal
+data/meshhall.db-shm
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite3
+data/backups/
+*.log
+
+# -- Secrets / local config ----------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+config/*.local.yaml
+config/plugins/*.local.yaml
+
+# -- Backups and scratch -------------------------------------------------------
+*.bak
+*.orig
+*.rej
+*.tmp
+
+# -- Python --------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# -- Virtual environment -------------------------------------------------------
+venv/
+.venv/
+env/
+
+# -- Editor / OS ---------------------------------------------------------------
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# -- Claude Code local state ---------------------------------------------------
+.claude/settings.local.json
