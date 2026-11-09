@@ -31,6 +31,8 @@ Format: `[core vX.Y.Z]` for core changes, `[plugin vX.Y.Z]` for plugin changes.
     WHERE last_hops = 255` added to `_MIGRATIONS` clears rows stored by
     earlier versions. It runs on startup and is harmless to re-run.
   - Behavior change: `!heard` output no longer includes `hops:255`.
+  - Versions: `plugins/13_heard.py` 0.2.0 -> 0.2.1 (bugfix). Core version
+    is unchanged until release packaging.
   - Cross-repo: only `users.last_hops` changes, not the alert tables
     (such as `wx_alerts`) that meshhall-same writes to.
 

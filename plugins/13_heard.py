@@ -15,7 +15,7 @@ Usage:
 Scope: DM only (direct). Privilege floor: 1 (any registered user).
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __author__    = "Kameron Gasso"
 __email__     = "kameron@gasso.org"
