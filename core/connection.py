@@ -37,6 +37,7 @@ import asyncio
 import logging
 import time
 
+from core.database import normalize_hops
 from core.dispatcher import Dispatcher, Message
 
 logger = logging.getLogger(__name__)
@@ -714,7 +715,8 @@ class ConnectionManager:
                 raw_hops = payload.get("path_len")
             if raw_hops is None:
                 raw_hops = contact.get("path_len")
-            last_hops = int(raw_hops) if raw_hops is not None else None
+            # 255 = firmware "direct/unknown" sentinel -> treated as no hop count
+            last_hops = normalize_hops(raw_hops)
 
             logger.debug(
                 f"ADV contact detail: prefix={pubkey_prefix} "

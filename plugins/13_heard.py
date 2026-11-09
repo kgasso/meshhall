@@ -25,7 +25,7 @@ __license__   = "GPLv3"
 import logging
 import time
 
-from core.database import PRIV_DEFAULT
+from core.database import PRIV_DEFAULT, normalize_hops
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ def _fmt_row(row, contacts_snapshot: dict) -> str:
     - "heard" = most recent of last_seen_ts (any inbound msg) and last_dm_ts (DM only)
     - Hops comes from DB last_hops first; falls back to live contacts cache
       path_len if DB value is NULL (e.g. restart cleared it before ADV persisted).
+    - path_len 255 is the firmware "direct or unknown" sentinel, not a hop
+      count. It is treated as missing, so "hops:" is left out for those nodes.
     - Fields omitted entirely when unavailable.
     """
     prefix     = row["pubkey_prefix"]
@@ -70,16 +72,12 @@ def _fmt_row(row, contacts_snapshot: dict) -> str:
     # "heard" = most recent inbound message (channel or DM)
     heard_ts = max(t for t in (seen_ts, dm_ts) if t) if any((seen_ts, dm_ts)) else None
 
-    # Supplement hops from live cache if DB value missing
-    hops = db_hops
+    # 255 is the firmware "direct/unknown" sentinel, not a hop count. It is
+    # treated as missing, in the DB value and in the live cache alike.
+    hops = normalize_hops(db_hops)
     if hops is None:
         contact = contacts_snapshot.get(prefix, {})
-        raw = contact.get("path_len")
-        if raw is not None:
-            try:
-                hops = int(raw)
-            except (TypeError, ValueError):
-                hops = None
+        hops = normalize_hops(contact.get("path_len"))
 
     parts = [f"{name} ({prefix})"]
     if advert_ts:
